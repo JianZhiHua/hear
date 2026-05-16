@@ -1,0 +1,22 @@
+# 项目排除路径
+/.gradle/
+/build/
+/.kotlin/
+/local.properties
+
+# Android / Gradle 构建产物
+**/build/
+*.apk
+*.ap_
+*.aab
+*.dex
+
+# IDE 本机状态；保留共享运行配置
+/.idea/*
+!/.idea/runConfigurations/
+!/.idea/runConfigurations/*.xml
+
+# 系统与日志
+.DS_Store
+Thumbs.db
+*.log

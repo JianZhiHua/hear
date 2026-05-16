@@ -1,0 +1,550 @@
+package com.qingyi.hear.ui
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.qingyi.hear.HearApplication
+import com.qingyi.hear.domain.LyricLine
+import com.qingyi.hear.domain.LyricSettings
+import com.qingyi.hear.domain.Lyrics
+import com.qingyi.hear.domain.PlayMode
+import com.qingyi.hear.domain.Playlist
+import com.qingyi.hear.domain.Track
+import com.qingyi.hear.domain.activeLyricIndex
+import com.qingyi.hear.domain.parseLyrics
+import com.qingyi.hear.domain.trackQueueKey
+import com.qingyi.hear.providers.MusicProvider
+import com.qingyi.hear.storage.LibraryStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+class HearViewModel(application: Application) : AndroidViewModel(application) {
+    private val container = (application as HearApplication).container
+    private val credentialStore = container.credentialStore
+    private val queueStore = container.queueStore
+    private val libraryStore = container.libraryStore
+    private val providers = container.providers
+    private val providerBySource = container.providerBySource
+    private val playbackManager = container.playbackManager
+    private var currentLyricTrackKey: String? = null
+
+    private val _state = MutableStateFlow(
+        HearUiState(
+            providers = providers.map { ProviderStatus(it.source, it.displayName, hasCookie = hasCookie(it.source)) },
+        ),
+    )
+    val state: StateFlow<HearUiState> = _state.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            val snapshot = queueStore.loadSnapshot()
+            _state.value = _state.value.copy(lyricSettings = snapshot.lyricSettings)
+        }
+        viewModelScope.launch {
+            val snapshot = libraryStore.loadSnapshot()
+            _state.value = _state.value.copy(
+                playlists = snapshot.allPlaylists,
+                cachedLibraryUpdatedAtMs = snapshot.updatedAtMs,
+            )
+        }
+        viewModelScope.launch {
+            playbackManager.queueState.collectLatest { queueState ->
+                _state.value = _state.value.copy(
+                    queue = queueState.queue,
+                    currentIndex = queueState.currentIndex,
+                    playMode = queueState.playMode,
+                    volume = queueState.volume,
+                )
+            }
+        }
+        viewModelScope.launch {
+            playbackManager.state.collectLatest { playbackState ->
+                val activeIndex = activeLyricIndex(_state.value.lyricLines, playbackState.positionMs)
+                _state.value = _state.value.copy(
+                    currentTrack = playbackState.currentTrack,
+                    currentIndex = playbackState.currentIndex,
+                    isPlaying = playbackState.isPlaying,
+                    isBuffering = playbackState.isBuffering,
+                    positionMs = playbackState.positionMs,
+                    durationMs = playbackState.durationMs,
+                    volume = playbackState.volume,
+                    activeLyricIndex = activeIndex,
+                    message = playbackState.errorMessage?.let { "播放失败：$it" }
+                        ?: _state.value.message,
+                )
+                maybeFetchLyrics(playbackState.currentTrack)
+            }
+        }
+    }
+
+    fun updateKeyword(value: String) {
+        _state.value = _state.value.copy(keyword = value)
+    }
+
+    fun updatePlaylistInput(value: String) {
+        _state.value = _state.value.copy(playlistInput = value)
+    }
+
+    fun updateLocalPlaylistName(value: String) {
+        _state.value = _state.value.copy(localPlaylistName = value)
+    }
+
+    fun saveCookie(source: String, cookie: String) {
+        credentialStore.setCookie(source, cookie)
+        refreshProviderStatuses("已保存 ${displayName(source)} Cookie")
+    }
+
+    fun clearCookie(source: String) {
+        credentialStore.clearCookie(source)
+        refreshProviderStatuses("已清除 ${displayName(source)} Cookie")
+    }
+
+    fun search() {
+        val keyword = _state.value.keyword.trim()
+        if (keyword.isBlank()) {
+            _state.value = _state.value.copy(message = "请先输入歌曲、歌手或专辑关键词")
+            return
+        }
+        viewModelScope.launch {
+            runBusy("正在搜索...") {
+                val results = providers.map { provider ->
+                    async(Dispatchers.IO) {
+                        runCatching { provider.search(keyword, limit = 20) }
+                            .fold(
+                                onSuccess = { it },
+                                onFailure = { error ->
+                                    appendMessage("${provider.displayName}：${friendlyError(error)}")
+                                    emptyList()
+                                },
+                            )
+                    }
+                }.awaitAll().flatten()
+                _state.value = _state.value.copy(
+                    searchResults = results,
+                    selectedPlaylist = null,
+                    message = if (results.isEmpty()) "没有找到歌曲" else "找到 ${results.size} 首歌曲",
+                )
+            }
+        }
+    }
+
+    fun loadUserPlaylists(source: String) {
+        val provider = providerBySource[source] ?: return
+        viewModelScope.launch {
+            runBusy("正在获取歌单...") {
+                val playlists = withContext(Dispatchers.IO) { provider.fetchUserPlaylists() }
+                val retainedRemote = remotePlaylists(_state.value.playlists).filterNot { it.kind == source }
+                val merged = mergePlaylists(retainedRemote + playlists, localPlaylists())
+                libraryStore.saveCachedPlaylists(remotePlaylists(merged))
+                _state.value = _state.value.copy(
+                    playlists = merged,
+                    selectedPlaylist = null,
+                    cachedLibraryUpdatedAtMs = System.currentTimeMillis(),
+                    message = "已从 ${provider.displayName} 获取 ${playlists.size} 个歌单",
+                )
+            }
+        }
+    }
+
+    fun loadAllUserPlaylists() {
+        viewModelScope.launch {
+            runBusy("正在同步所有歌单...") {
+                val results = providers.map { provider ->
+                    async(Dispatchers.IO) {
+                        if (!hasCookie(provider.source)) {
+                            PlaylistLoadResult(
+                                playlists = emptyList(),
+                                message = "${provider.displayName} 未配置 Cookie",
+                            )
+                        } else {
+                            runCatching { provider.fetchUserPlaylists() }
+                                .fold(
+                                    onSuccess = { PlaylistLoadResult(playlists = it) },
+                                    onFailure = { error ->
+                                        PlaylistLoadResult(
+                                            playlists = emptyList(),
+                                            message = "${provider.displayName}：${friendlyError(error)}",
+                                        )
+                                    },
+                                )
+                        }
+                    }
+                }.awaitAll()
+                val playlists = results.flatMap { it.playlists }
+                val warnings = results.mapNotNull { it.message }.filter(String::isNotBlank)
+                val merged = mergePlaylists(playlists, localPlaylists())
+                libraryStore.saveCachedPlaylists(remotePlaylists(merged))
+                _state.value = _state.value.copy(
+                    playlists = merged,
+                    selectedPlaylist = null,
+                    cachedLibraryUpdatedAtMs = System.currentTimeMillis(),
+                    message = buildList {
+                        add(if (playlists.isEmpty()) "没有同步到歌单" else "已同步 ${playlists.size} 个歌单")
+                        addAll(warnings)
+                    }.joinToString("\n"),
+                )
+            }
+        }
+    }
+
+    fun importPlaylist(source: String) {
+        val provider = providerBySource[source] ?: return
+        val input = _state.value.playlistInput.trim()
+        if (input.isBlank()) {
+            _state.value = _state.value.copy(message = "请先输入歌单 ID 或链接")
+            return
+        }
+        viewModelScope.launch {
+            runBusy("正在导入歌单...") {
+                val playlist = withContext(Dispatchers.IO) { provider.fetchPlaylist(input) }
+                libraryStore.upsertCachedPlaylist(playlist)
+                val merged = upsertPlaylist(_state.value.playlists, playlist)
+                _state.value = _state.value.copy(
+                    selectedPlaylist = playlist,
+                    searchResults = playlist.tracks,
+                    playlists = merged,
+                    cachedLibraryUpdatedAtMs = System.currentTimeMillis(),
+                    message = "已导入：${playlist.name}",
+                )
+            }
+        }
+    }
+
+    fun openPlaylist(playlist: Playlist) {
+        if (playlist.kind == LibraryStore.LOCAL_KIND) {
+            _state.value = _state.value.copy(
+                selectedPlaylist = playlist,
+                searchResults = playlist.tracks,
+                message = null,
+            )
+            return
+        }
+        val provider = providerBySource[playlist.kind] ?: return
+        viewModelScope.launch {
+            runBusy("正在打开歌单...") {
+                val loaded = withContext(Dispatchers.IO) {
+                    runCatching { provider.fetchPlaylist(playlist.id) }
+                        .getOrElse { error ->
+                            playlist.takeIf { it.tracks.isNotEmpty() } ?: throw error
+                        }
+                }
+                libraryStore.upsertCachedPlaylist(loaded)
+                _state.value = _state.value.copy(
+                    selectedPlaylist = loaded,
+                    searchResults = loaded.tracks,
+                    playlists = upsertPlaylist(_state.value.playlists, loaded),
+                    cachedLibraryUpdatedAtMs = System.currentTimeMillis(),
+                    message = "已打开：${loaded.name}",
+                )
+            }
+        }
+    }
+
+    fun closePlaylist() {
+        _state.value = _state.value.copy(
+            selectedPlaylist = null,
+            searchResults = emptyList(),
+            message = null,
+        )
+    }
+
+    fun play(track: Track) {
+        _state.value = _state.value.copy(message = "正在播放：${track.title}")
+        playbackManager.play(track)
+    }
+
+    fun createLocalPlaylist() {
+        val name = _state.value.localPlaylistName.trim()
+        viewModelScope.launch {
+            val playlist = libraryStore.createLocalPlaylist(name.ifBlank { "我的歌单" })
+            val merged = upsertPlaylist(_state.value.playlists, playlist)
+            _state.value = _state.value.copy(
+                playlists = merged,
+                selectedPlaylist = playlist,
+                searchResults = emptyList(),
+                localPlaylistName = "",
+                cachedLibraryUpdatedAtMs = System.currentTimeMillis(),
+                message = "已创建本地歌单：${playlist.name}",
+            )
+        }
+    }
+
+    fun deleteSelectedLocalPlaylist() {
+        val playlist = _state.value.selectedPlaylist?.takeIf { it.kind == LibraryStore.LOCAL_KIND } ?: return
+        viewModelScope.launch {
+            libraryStore.deleteLocalPlaylist(playlist.id)
+            _state.value = _state.value.copy(
+                playlists = _state.value.playlists.filterNot { it.kind == LibraryStore.LOCAL_KIND && it.id == playlist.id },
+                selectedPlaylist = null,
+                searchResults = emptyList(),
+                cachedLibraryUpdatedAtMs = System.currentTimeMillis(),
+                message = "已删除本地歌单：${playlist.name}",
+            )
+        }
+    }
+
+    fun clearRemotePlaylistCache() {
+        viewModelScope.launch {
+            libraryStore.clearCachedPlaylists()
+            _state.value = _state.value.copy(
+                playlists = localPlaylists(),
+                selectedPlaylist = _state.value.selectedPlaylist?.takeIf { it.kind == LibraryStore.LOCAL_KIND },
+                searchResults = _state.value.selectedPlaylist?.takeIf { it.kind == LibraryStore.LOCAL_KIND }?.tracks ?: emptyList(),
+                cachedLibraryUpdatedAtMs = System.currentTimeMillis(),
+                message = "已清理平台歌单缓存，本地歌单已保留",
+            )
+        }
+    }
+
+    fun addTrackToFirstLocalPlaylist(track: Track) {
+        viewModelScope.launch {
+            val local = localPlaylists().firstOrNull()
+                ?: libraryStore.createLocalPlaylist("我的收藏")
+            val updated = libraryStore.addTrackToLocalPlaylist(local.id, track) ?: local
+            _state.value = _state.value.copy(
+                playlists = upsertPlaylist(_state.value.playlists, updated),
+                selectedPlaylist = _state.value.selectedPlaylist?.let { current ->
+                    if (current.kind == LibraryStore.LOCAL_KIND && current.id == updated.id) updated else current
+                },
+                searchResults = if (_state.value.selectedPlaylist?.id == updated.id) updated.tracks else _state.value.searchResults,
+                cachedLibraryUpdatedAtMs = System.currentTimeMillis(),
+                message = "已加入本地歌单：${updated.name}",
+            )
+        }
+    }
+
+    fun removeTrackFromSelectedLocalPlaylist(index: Int) {
+        val playlist = _state.value.selectedPlaylist?.takeIf { it.kind == LibraryStore.LOCAL_KIND } ?: return
+        viewModelScope.launch {
+            val updated = libraryStore.removeTrackFromLocalPlaylist(playlist.id, index) ?: return@launch
+            _state.value = _state.value.copy(
+                playlists = upsertPlaylist(_state.value.playlists, updated),
+                selectedPlaylist = updated,
+                searchResults = updated.tracks,
+                cachedLibraryUpdatedAtMs = System.currentTimeMillis(),
+                message = "已从本地歌单移除歌曲",
+            )
+        }
+    }
+
+    fun playQueueItem(index: Int) {
+        playbackManager.playQueueItem(index)
+    }
+
+    fun togglePlayback() {
+        playbackManager.toggle()
+    }
+
+    fun previous() {
+        playbackManager.previous()
+    }
+
+    fun next() {
+        playbackManager.next()
+    }
+
+    fun seekTo(positionMs: Long) {
+        playbackManager.seekTo(positionMs)
+    }
+
+    fun setVolume(volume: Float) {
+        playbackManager.setVolume(volume)
+    }
+
+    fun setPlayMode(playMode: PlayMode) {
+        playbackManager.setPlayMode(playMode)
+    }
+
+    fun removeQueueItem(index: Int) {
+        playbackManager.removeQueueItem(index)
+        _state.value = _state.value.copy(message = "已从队列移除歌曲")
+    }
+
+    fun clearQueue() {
+        currentLyricTrackKey = null
+        playbackManager.clearQueue()
+        _state.value = _state.value.copy(
+            currentTrack = null,
+            lyrics = null,
+            lyricLines = emptyList(),
+            activeLyricIndex = null,
+            lyricStatus = "暂无歌词",
+            message = "播放队列已清空",
+        )
+    }
+
+    fun updateLyricSetting(settings: LyricSettings) {
+        val normalized = settings.copy(
+            fontSizeSp = settings.fontSizeSp.coerceIn(12f, 48f),
+            lineSpacing = settings.lineSpacing.coerceIn(1.0f, 2.0f),
+        )
+        _state.value = _state.value.copy(lyricSettings = normalized)
+        viewModelScope.launch {
+            queueStore.saveLyricSettings(normalized)
+        }
+    }
+
+    private fun maybeFetchLyrics(track: Track?) {
+        if (track == null) {
+            if (currentLyricTrackKey != null) {
+                currentLyricTrackKey = null
+                _state.value = _state.value.copy(
+                    lyrics = null,
+                    lyricLines = emptyList(),
+                    activeLyricIndex = null,
+                    lyricStatus = "暂无歌词",
+                )
+            }
+            return
+        }
+        val key = trackQueueKey(track)
+        if (key == currentLyricTrackKey) return
+        currentLyricTrackKey = key
+        _state.value = _state.value.copy(
+            lyrics = null,
+            lyricLines = emptyList(),
+            activeLyricIndex = null,
+            lyricStatus = "正在获取歌词...",
+        )
+        val provider = providerBySource[track.source] ?: return
+        viewModelScope.launch {
+            fetchLyricsFor(provider, track)
+        }
+    }
+
+    private suspend fun fetchLyricsFor(provider: MusicProvider, track: Track) {
+        val result = withContext(Dispatchers.IO) {
+            runCatching { provider.fetchLyrics(track) }
+        }
+        result.fold(
+            onSuccess = { lyrics ->
+                val text = lyrics.text.ifBlank { lyrics.translatedText.orEmpty() }
+                val lines = parseLyrics(text)
+                _state.value = _state.value.copy(
+                    lyrics = lyrics,
+                    lyricLines = lines,
+                    activeLyricIndex = activeLyricIndex(lines, _state.value.positionMs),
+                    lyricStatus = if (lines.isEmpty()) "暂无歌词" else null,
+                )
+            },
+            onFailure = { error ->
+                _state.value = _state.value.copy(
+                    lyrics = Lyrics(""),
+                    lyricLines = emptyList(),
+                    activeLyricIndex = null,
+                    lyricStatus = "歌词获取失败：${friendlyError(error)}",
+                )
+            },
+        )
+    }
+
+    private suspend fun runBusy(label: String, block: suspend () -> Unit) {
+        _state.value = _state.value.copy(isBusy = true, message = label)
+        try {
+            block()
+        } catch (error: Throwable) {
+            _state.value = _state.value.copy(message = friendlyError(error))
+        } finally {
+            _state.value = _state.value.copy(isBusy = false)
+        }
+    }
+
+    private fun appendMessage(value: String) {
+        if (value.isBlank()) return
+        val current = _state.value.message.orEmpty()
+        _state.value = _state.value.copy(message = listOf(current, value).filter(String::isNotBlank).joinToString("\n"))
+    }
+
+    private fun refreshProviderStatuses(message: String? = null) {
+        _state.value = _state.value.copy(
+            providers = providers.map { ProviderStatus(it.source, it.displayName, hasCookie = hasCookie(it.source)) },
+            message = message,
+        )
+    }
+
+    private fun friendlyError(error: Throwable): String {
+        val raw = error.message ?: error::class.java.simpleName
+        return when {
+            raw.contains("cookie", ignoreCase = true) && raw.contains("qq", ignoreCase = true) ->
+                "QQ 音乐需要先填写 Cookie"
+
+            raw.contains("cookie", ignoreCase = true) && raw.contains("netease", ignoreCase = true) ->
+                "网易云音乐需要先填写 Cookie"
+
+            raw.contains("playable URL", ignoreCase = true) || raw.contains("可播放链接") ->
+                "没有获取到可播放链接，可能受会员、版权或账号权限限制"
+
+            raw.contains("playlist", ignoreCase = true) && raw.contains("ID", ignoreCase = true) ->
+                "请检查歌单 ID 或链接是否正确"
+
+            raw.contains("HTTP", ignoreCase = true) ->
+                "网络请求失败：$raw"
+
+            raw.contains("resolver", ignoreCase = true) ->
+                "歌曲缺少播放解析信息"
+
+            else -> raw
+        }
+    }
+
+    private fun hasCookie(source: String): Boolean = !credentialStore.getCookie(source).isNullOrBlank()
+
+    private fun displayName(source: String): String = providerBySource[source]?.displayName ?: source
+
+    private fun localPlaylists(): List<Playlist> =
+        _state.value.playlists.filter { it.kind == LibraryStore.LOCAL_KIND }
+
+    private fun remotePlaylists(playlists: List<Playlist>): List<Playlist> =
+        playlists.filterNot { it.kind == LibraryStore.LOCAL_KIND }
+
+    private fun mergePlaylists(remote: List<Playlist>, local: List<Playlist>): List<Playlist> =
+        local + remote
+
+    private fun upsertPlaylist(playlists: List<Playlist>, playlist: Playlist): List<Playlist> =
+        listOf(playlist) + playlists.filterNot { it.kind == playlist.kind && it.id == playlist.id }
+}
+
+data class HearUiState(
+    val providers: List<ProviderStatus> = emptyList(),
+    val keyword: String = "",
+    val playlistInput: String = "",
+    val searchResults: List<Track> = emptyList(),
+    val playlists: List<Playlist> = emptyList(),
+    val selectedPlaylist: Playlist? = null,
+    val queue: List<Track> = emptyList(),
+    val currentIndex: Int = -1,
+    val currentTrack: Track? = null,
+    val lyrics: Lyrics? = null,
+    val lyricLines: List<LyricLine> = emptyList(),
+    val activeLyricIndex: Int? = null,
+    val lyricStatus: String? = "暂无歌词",
+    val isPlaying: Boolean = false,
+    val isBuffering: Boolean = false,
+    val positionMs: Long = 0L,
+    val durationMs: Long = 0L,
+    val volume: Float = 1f,
+    val playMode: PlayMode = PlayMode.Order,
+    val lyricSettings: LyricSettings = LyricSettings(),
+    val localPlaylistName: String = "",
+    val cachedLibraryUpdatedAtMs: Long = 0L,
+    val isBusy: Boolean = false,
+    val message: String? = null,
+)
+
+data class ProviderStatus(
+    val source: String,
+    val displayName: String,
+    val hasCookie: Boolean,
+)
+
+private data class PlaylistLoadResult(
+    val playlists: List<Playlist>,
+    val message: String? = null,
+)
