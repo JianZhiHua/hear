@@ -13,10 +13,13 @@ import com.qingyi.hear.providers.ProviderError
 import com.qingyi.hear.storage.PlaybackQueueStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -30,6 +33,7 @@ class HearPlaybackManager(
 ) {
     private var queueTouched = false
     private var lastPersistedIndex = -2
+    private var progressJob: Job? = null
     private val appContext = context.applicationContext
     private val _queueState = MutableStateFlow(PlaybackQueueState())
 
@@ -61,6 +65,12 @@ class HearPlaybackManager(
         }
         appScope.launch {
             controller.state.collectLatest { playbackState ->
+                if (playbackState.isPlaying || playbackState.isBuffering) {
+                    startProgressTicker()
+                } else {
+                    stopProgressTicker()
+                    controller.refreshProgress()
+                }
                 val current = _queueState.value
                 val newIndex = playbackState.currentIndex
                 if (newIndex != current.currentIndex && (newIndex in current.queue.indices || newIndex == -1)) {
@@ -175,7 +185,23 @@ class HearPlaybackManager(
     }
 
     fun release() {
+        stopProgressTicker()
         controller.release()
+    }
+
+    private fun startProgressTicker() {
+        if (progressJob?.isActive == true) return
+        progressJob = appScope.launch {
+            while (isActive) {
+                controller.refreshProgress()
+                delay(PROGRESS_REFRESH_MS)
+            }
+        }
+    }
+
+    private fun stopProgressTicker() {
+        progressJob?.cancel()
+        progressJob = null
     }
 
     private suspend fun playQueueInternal(queue: List<Track>, index: Int) {
@@ -206,6 +232,10 @@ class HearPlaybackManager(
 
     private fun stopPlaybackService() {
         appContext.stopService(Intent(appContext, HearPlaybackService::class.java))
+    }
+
+    private companion object {
+        const val PROGRESS_REFRESH_MS = 500L
     }
 }
 

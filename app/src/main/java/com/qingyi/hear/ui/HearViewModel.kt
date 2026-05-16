@@ -308,15 +308,16 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
             val local = localPlaylists().firstOrNull()
                 ?: libraryStore.createLocalPlaylist("我的收藏")
             val updated = libraryStore.addTrackToLocalPlaylist(local.id, track) ?: local
-            _state.value = _state.value.copy(
-                playlists = upsertPlaylist(_state.value.playlists, updated),
-                selectedPlaylist = _state.value.selectedPlaylist?.let { current ->
-                    if (current.kind == LibraryStore.LOCAL_KIND && current.id == updated.id) updated else current
-                },
-                searchResults = if (_state.value.selectedPlaylist?.id == updated.id) updated.tracks else _state.value.searchResults,
-                cachedLibraryUpdatedAtMs = System.currentTimeMillis(),
-                message = "已加入本地歌单：${updated.name}",
-            )
+            applyUpdatedLocalPlaylist(updated)
+        }
+    }
+
+    fun addTrackToLocalPlaylist(playlistId: String, track: Track) {
+        viewModelScope.launch {
+            val updated = libraryStore.addTrackToLocalPlaylist(playlistId, track)
+                ?: _state.value.playlists.firstOrNull { it.kind == LibraryStore.LOCAL_KIND && it.id == playlistId }
+                ?: return@launch
+            applyUpdatedLocalPlaylist(updated)
         }
     }
 
@@ -497,6 +498,18 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
     private fun hasCookie(source: String): Boolean = !credentialStore.getCookie(source).isNullOrBlank()
 
     private fun displayName(source: String): String = providerBySource[source]?.displayName ?: source
+
+    private fun applyUpdatedLocalPlaylist(updated: Playlist) {
+        _state.value = _state.value.copy(
+            playlists = upsertPlaylist(_state.value.playlists, updated),
+            selectedPlaylist = _state.value.selectedPlaylist?.let { current ->
+                if (current.kind == LibraryStore.LOCAL_KIND && current.id == updated.id) updated else current
+            },
+            searchResults = if (_state.value.selectedPlaylist?.id == updated.id) updated.tracks else _state.value.searchResults,
+            cachedLibraryUpdatedAtMs = System.currentTimeMillis(),
+            message = "已加入本地歌单：${updated.name}",
+        )
+    }
 
     private fun localPlaylists(): List<Playlist> =
         _state.value.playlists.filter { it.kind == LibraryStore.LOCAL_KIND }

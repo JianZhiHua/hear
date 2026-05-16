@@ -36,7 +36,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MusicNote
@@ -52,6 +51,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -99,6 +99,7 @@ import com.qingyi.hear.domain.PlayMode
 import com.qingyi.hear.domain.Playlist
 import com.qingyi.hear.domain.Track
 import com.qingyi.hear.storage.LibraryStore
+import kotlin.math.abs
 
 private enum class AppTab {
     Library,
@@ -120,7 +121,9 @@ fun HearApp(viewModel: HearViewModel = viewModel()) {
     var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
     var showPlayer by rememberSaveable { mutableStateOf(false) }
     var showLyricSettings by rememberSaveable { mutableStateOf(false) }
+    var trackForLocalPlaylist by remember { mutableStateOf<Track?>(null) }
     val selectedTab = AppTab.entries[selectedTabIndex]
+    val localPlaylists = state.playlists.filter { it.kind == LibraryStore.LOCAL_KIND }
 
     Box(Modifier.fillMaxSize()) {
         Scaffold(
@@ -166,6 +169,7 @@ fun HearApp(viewModel: HearViewModel = viewModel()) {
                             onClosePlaylist = viewModel::closePlaylist,
                             onDeleteSelectedLocalPlaylist = viewModel::deleteSelectedLocalPlaylist,
                             onRemoveLocalTrack = viewModel::removeTrackFromSelectedLocalPlaylist,
+                            onRequestAddToLocal = { trackForLocalPlaylist = it },
                             onPlayTrack = viewModel::play,
                         )
 
@@ -174,7 +178,7 @@ fun HearApp(viewModel: HearViewModel = viewModel()) {
                             onKeywordChanged = viewModel::updateKeyword,
                             onSearch = viewModel::search,
                             onPlayTrack = viewModel::play,
-                            onAddToLocal = viewModel::addTrackToFirstLocalPlaylist,
+                            onRequestAddToLocal = { trackForLocalPlaylist = it },
                         )
 
                         AppTab.Settings -> SettingsPage(
@@ -207,6 +211,22 @@ fun HearApp(viewModel: HearViewModel = viewModel()) {
                 onPlayQueueItem = viewModel::playQueueItem,
                 onRemoveQueueItem = viewModel::removeQueueItem,
                 onClearQueue = viewModel::clearQueue,
+            )
+        }
+
+        trackForLocalPlaylist?.let { track ->
+            LocalPlaylistPickerDialog(
+                track = track,
+                playlists = localPlaylists,
+                onDismiss = { trackForLocalPlaylist = null },
+                onSelectPlaylist = { playlist ->
+                    viewModel.addTrackToLocalPlaylist(playlist.id, track)
+                    trackForLocalPlaylist = null
+                },
+                onCreateDefaultAndAdd = {
+                    viewModel.addTrackToFirstLocalPlaylist(track)
+                    trackForLocalPlaylist = null
+                },
             )
         }
     }
@@ -249,6 +269,7 @@ private fun LibraryPage(
     onClosePlaylist: () -> Unit,
     onDeleteSelectedLocalPlaylist: () -> Unit,
     onRemoveLocalTrack: (Int) -> Unit,
+    onRequestAddToLocal: (Track) -> Unit,
     onPlayTrack: (Track) -> Unit,
 ) {
     var sourceFilter by rememberSaveable { mutableStateOf("all") }
@@ -337,6 +358,7 @@ private fun LibraryPage(
                         track = track,
                         index = index + 1,
                         active = track == state.currentTrack,
+                        onAddToLocal = { onRequestAddToLocal(track) },
                         onPlay = { onPlayTrack(track) },
                         trailing = if (selectedPlaylist.kind == LibraryStore.LOCAL_KIND) {
                             {
@@ -360,7 +382,7 @@ private fun SearchPage(
     onKeywordChanged: (String) -> Unit,
     onSearch: () -> Unit,
     onPlayTrack: (Track) -> Unit,
-    onAddToLocal: (Track) -> Unit,
+    onRequestAddToLocal: (Track) -> Unit,
 ) {
     var selectedSource by rememberSaveable { mutableStateOf("netease") }
     val results = state.searchResults.filter { it.source == selectedSource }
@@ -418,13 +440,9 @@ private fun SearchPage(
                     track = track,
                     index = index + 1,
                     active = track == state.currentTrack,
+                    onAddToLocal = { onRequestAddToLocal(track) },
                     onPlay = { onPlayTrack(track) },
                     actionText = "播放",
-                    trailing = {
-                        IconButton(onClick = { onAddToLocal(track) }) {
-                            Icon(Icons.Default.FavoriteBorder, contentDescription = "加入本地歌单")
-                        }
-                    },
                 )
             }
         }
@@ -793,7 +811,13 @@ private fun ColumnScope.ImmersiveLyricsPage(state: HearUiState) {
     val activeIndex = state.activeLyricIndex
     LaunchedEffect(activeIndex, state.lyricLines.size) {
         if (activeIndex != null && activeIndex in state.lyricLines.indices) {
-            listState.animateScrollToItem((activeIndex - 3).coerceAtLeast(0))
+            val targetIndex = (activeIndex - 2).coerceAtLeast(0)
+            val distance = abs(listState.firstVisibleItemIndex - targetIndex)
+            if (distance > 8) {
+                listState.scrollToItem(targetIndex)
+            } else {
+                listState.animateScrollToItem(targetIndex)
+            }
         }
     }
     Surface(
@@ -934,6 +958,85 @@ private fun MiniPlayer(
             }
         }
     }
+}
+
+@Composable
+private fun LocalPlaylistPickerDialog(
+    track: Track,
+    playlists: List<Playlist>,
+    onDismiss: () -> Unit,
+    onSelectPlaylist: (Playlist) -> Unit,
+    onCreateDefaultAndAdd: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "加入本地歌单",
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = track.displayTitle,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (playlists.isEmpty()) {
+                    EmptyState(
+                        title = "还没有本地歌单",
+                        body = "可以先创建“我的收藏”，然后把这首歌加入进去。",
+                    )
+                } else {
+                    playlists.forEach { playlist ->
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelectPlaylist(playlist) },
+                            color = FreshSurfaceSoft,
+                            shape = RoundedCornerShape(8.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                ArtworkTile(source = playlist.kind, title = playlist.name, size = 42.dp)
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        text = playlist.name,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Text(
+                                        text = "${playlist.trackCount ?: playlist.tracks.size} 首",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Icon(Icons.Default.Add, contentDescription = null, tint = FreshLeaf)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (playlists.isEmpty()) {
+                TextButton(onClick = onCreateDefaultAndAdd) {
+                    Text("创建并加入")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+    )
 }
 
 @Composable
@@ -1192,6 +1295,7 @@ private fun TrackListItem(
     track: Track,
     index: Int,
     active: Boolean,
+    onAddToLocal: (() -> Unit)? = null,
     onPlay: () -> Unit,
     actionText: String = if (active) "重播" else "播放",
     trailing: (@Composable () -> Unit)? = null,
@@ -1230,6 +1334,11 @@ private fun TrackListItem(
                     style = MaterialTheme.typography.bodySmall,
                     color = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            if (onAddToLocal != null) {
+                IconButton(onClick = onAddToLocal) {
+                    Icon(Icons.Default.Add, contentDescription = "加入本地歌单")
+                }
             }
             TextButton(onClick = onPlay) {
                 Text(actionText)
