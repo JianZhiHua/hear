@@ -34,6 +34,7 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
     private val providerBySource = container.providerBySource
     private val playbackManager = container.playbackManager
     private var currentLyricTrackKey: String? = null
+    private var lastPlaybackErrorMessage: String? = null
 
     private val _state = MutableStateFlow(
         HearUiState(
@@ -67,6 +68,14 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             playbackManager.state.collectLatest { playbackState ->
                 val activeIndex = activeLyricIndex(_state.value.lyricLines, playbackState.positionMs)
+                val playbackMessage = playbackState.errorMessage
+                    ?.let { "播放失败：$it" }
+                    ?.takeIf { it != lastPlaybackErrorMessage }
+                if (playbackState.errorMessage == null) {
+                    lastPlaybackErrorMessage = null
+                } else if (playbackMessage != null) {
+                    lastPlaybackErrorMessage = playbackMessage
+                }
                 _state.value = _state.value.copy(
                     currentTrack = playbackState.currentTrack,
                     currentIndex = playbackState.currentIndex,
@@ -76,8 +85,7 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
                     durationMs = playbackState.durationMs,
                     volume = playbackState.volume,
                     activeLyricIndex = activeIndex,
-                    message = playbackState.errorMessage?.let { "播放失败：$it" }
-                        ?: _state.value.message,
+                    message = playbackMessage ?: _state.value.message,
                 )
                 maybeFetchLyrics(playbackState.currentTrack)
             }
@@ -94,6 +102,12 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateLocalPlaylistName(value: String) {
         _state.value = _state.value.copy(localPlaylistName = value)
+    }
+
+    fun consumeMessage(message: String) {
+        if (_state.value.message == message) {
+            _state.value = _state.value.copy(message = null)
+        }
     }
 
     fun saveCookie(source: String, cookie: String) {
@@ -258,6 +272,26 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
     fun play(track: Track) {
         _state.value = _state.value.copy(message = "正在播放：${track.title}")
         playbackManager.play(track)
+    }
+
+    fun playPlaylist(tracks: List<Track>) {
+        if (tracks.isEmpty()) {
+            _state.value = _state.value.copy(message = "当前歌单没有可播放歌曲")
+            return
+        }
+        _state.value = _state.value.copy(message = "已替换播放列表，共 ${tracks.size} 首")
+        playbackManager.playQueue(tracks)
+    }
+
+    fun addToPlaybackQueue(track: Track) {
+        val added = playbackManager.addToQueue(track)
+        _state.value = _state.value.copy(
+            message = if (added) {
+                "已加入当前播放列表：${track.title}"
+            } else {
+                "播放列表中已存在：${track.title}"
+            },
+        )
     }
 
     fun createLocalPlaylist() {

@@ -184,6 +184,46 @@ class HearPlaybackController(
         }
     }
 
+    fun appendQueueItem(
+        track: Track,
+        tracks: List<Track>,
+        currentIndex: Int,
+        playMode: PlayMode,
+    ) {
+        val oldMediaItemCount = player.mediaItemCount
+        queue = tracks
+        tracksByMediaId = tracks.associateBy(::trackMediaId)
+        setPlayMode(playMode)
+
+        if (oldMediaItemCount == tracks.lastIndex && oldMediaItemCount > 0) {
+            player.addMediaItem(track.toMediaItem())
+            updateState(
+                currentTrack = currentTrack(),
+                currentIndex = safeCurrentIndex(),
+                errorMessage = null,
+            )
+            return
+        }
+
+        val safeIndex = currentIndex.takeIf { it in tracks.indices } ?: 0
+        val startPositionMs = safePosition()
+        val playWhenReady = player.playWhenReady
+        player.setMediaItems(tracks.map { it.toMediaItem() }, safeIndex, startPositionMs.coerceAtLeast(0L))
+        updateState(
+            currentTrack = tracks[safeIndex],
+            currentIndex = safeIndex,
+            positionMs = startPositionMs.coerceAtLeast(0L),
+            durationMs = tracks[safeIndex].durationMs ?: 0L,
+            errorMessage = null,
+        )
+        if (playWhenReady) {
+            player.prepare()
+            player.play()
+        } else {
+            player.playWhenReady = false
+        }
+    }
+
     fun toggle() {
         if (player.isPlaying) {
             player.pause()

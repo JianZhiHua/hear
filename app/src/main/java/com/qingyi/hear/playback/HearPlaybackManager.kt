@@ -91,6 +91,40 @@ class HearPlaybackManager(
         }
     }
 
+    fun playQueue(tracks: List<Track>, startIndex: Int = 0) {
+        appScope.launch {
+            if (tracks.isEmpty()) return@launch
+            val targetIndex = startIndex.coerceIn(tracks.indices)
+            playQueueInternal(tracks, targetIndex)
+        }
+    }
+
+    fun addToQueue(track: Track): Boolean {
+        val trackKey = trackQueueKey(track)
+        if (_queueState.value.queue.any { trackQueueKey(it) == trackKey }) {
+            return false
+        }
+        appScope.launch {
+            val current = _queueState.value
+            if (current.queue.any { trackQueueKey(it) == trackKey }) {
+                return@launch
+            }
+            val queue = current.queue + track
+            val targetIndex = current.currentIndex.takeIf { it in current.queue.indices } ?: 0
+            queueTouched = true
+            _queueState.value = current.copy(queue = queue, currentIndex = targetIndex)
+            queueStore.saveQueueState(queue, targetIndex)
+            lastPersistedIndex = targetIndex
+            controller.appendQueueItem(
+                track = track,
+                tracks = queue,
+                currentIndex = targetIndex,
+                playMode = current.playMode,
+            )
+        }
+        return true
+    }
+
     fun playQueueItem(index: Int) {
         appScope.launch {
             val current = _queueState.value

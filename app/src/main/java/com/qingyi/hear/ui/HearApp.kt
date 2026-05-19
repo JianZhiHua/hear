@@ -1,7 +1,10 @@
 package com.qingyi.hear.ui
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -82,6 +85,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -107,16 +112,26 @@ private enum class AppTab {
     Settings,
 }
 
-private val FreshBackground = Color(0xFFF5FBF7)
-private val FreshSurface = Color(0xFFFFFFFF)
-private val FreshSurfaceSoft = Color(0xFFEAF7F0)
-private val FreshMint = Color(0xFF62B58D)
-private val FreshLeaf = Color(0xFF2D7A5A)
-private val FreshPeach = Color(0xFFFFD8C7)
+@Composable
+private fun freshBackground(): Color = MaterialTheme.colorScheme.background
+
+@Composable
+private fun freshSurface(): Color = MaterialTheme.colorScheme.surface
+
+@Composable
+private fun freshSurfaceSoft(): Color = MaterialTheme.colorScheme.surfaceVariant
+
+@Composable
+private fun freshMint(): Color =
+    if (isSystemInDarkTheme()) Color(0xFF8BD9B3) else Color(0xFF62B58D)
+
+@Composable
+private fun freshLeaf(): Color = MaterialTheme.colorScheme.primary
 
 @Composable
 fun HearApp(viewModel: HearViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val cookieInputs = remember { mutableStateMapOf<String, String>() }
     var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
     var showPlayer by rememberSaveable { mutableStateOf(false) }
@@ -125,9 +140,16 @@ fun HearApp(viewModel: HearViewModel = viewModel()) {
     val selectedTab = AppTab.entries[selectedTabIndex]
     val localPlaylists = state.playlists.filter { it.kind == LibraryStore.LOCAL_KIND }
 
+    LaunchedEffect(state.message) {
+        val message = state.message?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        val duration = if (message.length > 28 || message.contains('\n')) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
+        Toast.makeText(context, message, duration).show()
+        viewModel.consumeMessage(message)
+    }
+
     Box(Modifier.fillMaxSize()) {
         Scaffold(
-            containerColor = FreshBackground,
+            containerColor = freshBackground(),
             bottomBar = {
                 Column {
                     MiniPlayer(
@@ -170,7 +192,9 @@ fun HearApp(viewModel: HearViewModel = viewModel()) {
                             onDeleteSelectedLocalPlaylist = viewModel::deleteSelectedLocalPlaylist,
                             onRemoveLocalTrack = viewModel::removeTrackFromSelectedLocalPlaylist,
                             onRequestAddToLocal = { trackForLocalPlaylist = it },
+                            onPlayPlaylist = viewModel::playPlaylist,
                             onPlayTrack = viewModel::play,
+                            onAddToQueue = viewModel::addToPlaybackQueue,
                         )
 
                         AppTab.Search -> SearchPage(
@@ -179,6 +203,7 @@ fun HearApp(viewModel: HearViewModel = viewModel()) {
                             onSearch = viewModel::search,
                             onPlayTrack = viewModel::play,
                             onRequestAddToLocal = { trackForLocalPlaylist = it },
+                            onAddToQueue = viewModel::addToPlaybackQueue,
                         )
 
                         AppTab.Settings -> SettingsPage(
@@ -237,7 +262,7 @@ private fun HearNavigationBar(
     selectedTab: AppTab,
     onTabSelected: (AppTab) -> Unit,
 ) {
-    NavigationBar(containerColor = FreshSurface) {
+    NavigationBar(containerColor = freshSurface()) {
         NavigationBarItem(
             selected = selectedTab == AppTab.Library,
             onClick = { onTabSelected(AppTab.Library) },
@@ -270,7 +295,9 @@ private fun LibraryPage(
     onDeleteSelectedLocalPlaylist: () -> Unit,
     onRemoveLocalTrack: (Int) -> Unit,
     onRequestAddToLocal: (Track) -> Unit,
+    onPlayPlaylist: (List<Track>) -> Unit,
     onPlayTrack: (Track) -> Unit,
+    onAddToQueue: (Track) -> Unit,
 ) {
     var sourceFilter by rememberSaveable { mutableStateOf("all") }
     val filteredPlaylists = state.playlists.filter { playlist ->
@@ -292,7 +319,6 @@ private fun LibraryPage(
                 onAction = onSyncAll,
             )
         }
-        item { StatusBanner(state.message) }
         if (selectedPlaylist == null) {
             item {
                 FreshHero(
@@ -344,6 +370,7 @@ private fun LibraryPage(
                     playlist = selectedPlaylist,
                     trackCount = selectedTracks.size,
                     onBack = onClosePlaylist,
+                    onPlayAll = { onPlayPlaylist(selectedTracks) },
                     onDeleteLocal = if (selectedPlaylist.kind == LibraryStore.LOCAL_KIND) onDeleteSelectedLocalPlaylist else null,
                 )
             }
@@ -359,6 +386,7 @@ private fun LibraryPage(
                         index = index + 1,
                         active = track == state.currentTrack,
                         onAddToLocal = { onRequestAddToLocal(track) },
+                        onAddToQueue = { onAddToQueue(track) },
                         onPlay = { onPlayTrack(track) },
                         trailing = if (selectedPlaylist.kind == LibraryStore.LOCAL_KIND) {
                             {
@@ -383,6 +411,7 @@ private fun SearchPage(
     onSearch: () -> Unit,
     onPlayTrack: (Track) -> Unit,
     onRequestAddToLocal: (Track) -> Unit,
+    onAddToQueue: (Track) -> Unit,
 ) {
     var selectedSource by rememberSaveable { mutableStateOf("netease") }
     val results = state.searchResults.filter { it.source == selectedSource }
@@ -416,7 +445,6 @@ private fun SearchPage(
                 }
             }
         }
-        item { StatusBanner(state.message) }
         item {
             SourceSegment(
                 selected = selectedSource,
@@ -441,6 +469,7 @@ private fun SearchPage(
                     index = index + 1,
                     active = track == state.currentTrack,
                     onAddToLocal = { onRequestAddToLocal(track) },
+                    onAddToQueue = { onAddToQueue(track) },
                     onPlay = { onPlayTrack(track) },
                     actionText = "播放",
                 )
@@ -474,7 +503,6 @@ private fun SettingsPage(
                 fontWeight = FontWeight.Bold,
             )
         }
-        item { StatusBanner(state.message) }
         item { SectionLabel("账号管理") }
         itemsIndexed(state.providers, key = { _, provider -> provider.source }) { _, provider ->
             AccountCard(
@@ -995,7 +1023,7 @@ private fun LocalPlaylistPickerDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { onSelectPlaylist(playlist) },
-                            color = FreshSurfaceSoft,
+                            color = freshSurfaceSoft(),
                             shape = RoundedCornerShape(8.dp),
                         ) {
                             Row(
@@ -1017,7 +1045,7 @@ private fun LocalPlaylistPickerDialog(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                Icon(Icons.Default.Add, contentDescription = null, tint = FreshLeaf)
+                                Icon(Icons.Default.Add, contentDescription = null, tint = freshLeaf())
                             }
                         }
                     }
@@ -1060,23 +1088,6 @@ private fun PageHeader(
 }
 
 @Composable
-private fun StatusBanner(message: String?) {
-    if (message.isNullOrBlank()) return
-    Surface(
-        color = FreshSurfaceSoft,
-        contentColor = FreshLeaf,
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Text(
-            text = message,
-            modifier = Modifier.padding(12.dp),
-            style = MaterialTheme.typography.bodySmall,
-        )
-    }
-}
-
-@Composable
 private fun CacheSummary(
     playlistCount: Int,
     localCount: Int,
@@ -1085,17 +1096,17 @@ private fun CacheSummary(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(FreshSurface)
+            .background(freshSurface())
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(Icons.Default.CloudDone, contentDescription = null, tint = FreshMint)
+        Icon(Icons.Default.CloudDone, contentDescription = null, tint = freshMint())
         Text(
             text = "本机已缓存 $playlistCount 个歌单",
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyMedium,
-            color = FreshLeaf,
+            color = freshLeaf(),
             fontWeight = FontWeight.SemiBold,
         )
         Text(
@@ -1114,7 +1125,7 @@ private fun FreshHero(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = FreshSurfaceSoft,
+        color = freshSurfaceSoft(),
         shape = RoundedCornerShape(8.dp),
     ) {
         Row(
@@ -1126,13 +1137,13 @@ private fun FreshHero(
                 modifier = Modifier
                     .size(46.dp)
                     .clip(CircleShape)
-                    .background(FreshSurface),
+                    .background(freshSurface()),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(icon, contentDescription = null, tint = FreshLeaf)
+                Icon(icon, contentDescription = null, tint = freshLeaf())
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = FreshLeaf)
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = freshLeaf())
                 Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -1147,7 +1158,7 @@ private fun LocalPlaylistCreator(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = FreshSurface,
+        color = freshSurface(),
         tonalElevation = 0.dp,
         shape = RoundedCornerShape(8.dp),
     ) {
@@ -1156,7 +1167,7 @@ private fun LocalPlaylistCreator(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Icon(Icons.Default.CreateNewFolder, contentDescription = null, tint = FreshMint)
+            Icon(Icons.Default.CreateNewFolder, contentDescription = null, tint = freshMint())
             OutlinedTextField(
                 value = name,
                 onValueChange = onNameChanged,
@@ -1216,7 +1227,7 @@ private fun PlaylistItem(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        color = FreshSurface,
+        color = freshSurface(),
         tonalElevation = 0.dp,
         shape = RoundedCornerShape(8.dp),
     ) {
@@ -1252,10 +1263,11 @@ private fun PlaylistDetailHeader(
     playlist: Playlist,
     trackCount: Int,
     onBack: () -> Unit,
+    onPlayAll: () -> Unit,
     onDeleteLocal: (() -> Unit)?,
 ) {
     Surface(
-        color = FreshSurface,
+        color = freshSurface(),
         tonalElevation = 0.dp,
         shape = RoundedCornerShape(8.dp),
     ) {
@@ -1281,9 +1293,19 @@ private fun PlaylistDetailHeader(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (onDeleteLocal != null) {
-                IconButton(onClick = onDeleteLocal) {
-                    Icon(Icons.Default.Delete, contentDescription = "删除本地歌单", tint = MaterialTheme.colorScheme.error)
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Button(onClick = onPlayAll, enabled = trackCount > 0) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("全部播放")
+                }
+                if (onDeleteLocal != null) {
+                    IconButton(onClick = onDeleteLocal) {
+                        Icon(Icons.Default.Delete, contentDescription = "删除本地歌单", tint = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
         }
@@ -1296,13 +1318,23 @@ private fun TrackListItem(
     index: Int,
     active: Boolean,
     onAddToLocal: (() -> Unit)? = null,
+    onAddToQueue: (() -> Unit)? = null,
     onPlay: () -> Unit,
     actionText: String = if (active) "重播" else "播放",
     trailing: (@Composable () -> Unit)? = null,
 ) {
+    val addToQueue = onAddToQueue
+    val songContentModifier = if (addToQueue != null) {
+        Modifier.pointerInput(track, addToQueue) {
+            detectTapGestures(onDoubleTap = { addToQueue() })
+        }
+    } else {
+        Modifier
+    }
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = if (active) MaterialTheme.colorScheme.primaryContainer else FreshSurface,
+        color = if (active) MaterialTheme.colorScheme.primaryContainer else freshSurface(),
         contentColor = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
         tonalElevation = if (active) 2.dp else 1.dp,
         shape = RoundedCornerShape(8.dp),
@@ -1319,21 +1351,29 @@ private fun TrackListItem(
                 style = MaterialTheme.typography.labelLarge,
                 color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            ArtworkTile(source = track.source, title = track.title, size = 48.dp)
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = track.title,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = trackSubtitle(track),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .then(songContentModifier),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                ArtworkTile(source = track.source, title = track.title, size = 48.dp)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = track.title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = trackSubtitle(track),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             if (onAddToLocal != null) {
                 IconButton(onClick = onAddToLocal) {
@@ -1359,7 +1399,7 @@ private fun AccountCard(
     onLoadUserPlaylists: () -> Unit,
 ) {
     Surface(
-        color = FreshSurface,
+        color = freshSurface(),
         tonalElevation = 0.dp,
         shape = RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth(),
@@ -1410,7 +1450,7 @@ private fun ManualPlaylistImport(
     onImportPlaylist: (String) -> Unit,
 ) {
     Surface(
-        color = FreshSurface,
+        color = freshSurface(),
         tonalElevation = 0.dp,
         shape = RoundedCornerShape(8.dp),
     ) {
@@ -1449,7 +1489,7 @@ private fun SettingsRow(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
-        color = FreshSurface,
+        color = freshSurface(),
         tonalElevation = 0.dp,
         shape = RoundedCornerShape(8.dp),
     ) {
@@ -1590,7 +1630,7 @@ private fun EmptyState(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = FreshSurface,
+        color = freshSurface(),
         tonalElevation = 0.dp,
         shape = RoundedCornerShape(8.dp),
     ) {
@@ -1643,7 +1683,7 @@ private fun platformColor(source: String?): Color =
     when (source) {
         "qq" -> Color(0xFF1FA463)
         "netease" -> Color(0xFFD6453D)
-        LibraryStore.LOCAL_KIND -> FreshMint
+        LibraryStore.LOCAL_KIND -> freshMint()
         else -> MaterialTheme.colorScheme.primary
     }
 
