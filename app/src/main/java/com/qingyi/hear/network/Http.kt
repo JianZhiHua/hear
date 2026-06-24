@@ -174,6 +174,6 @@ private fun calculateDelayWithJitter(
 ): Long {
     val jitter = baseDelayMs * config.jitterFactor
     val jitterRange = (-jitter).toLong()..jitter.toLong()
-    return (baseDelayMs + Random.nextLong(jitterRange.first, jitterRange.lastInclusive))
+    return (baseDelayMs + Random.nextLong(jitterRange.first, jitterRange.last))
         .coerceAtLeast(0L)
 }
