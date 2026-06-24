@@ -44,3 +44,35 @@ jobs:
         with:
           name: hear-release
           path: app/build/outputs/apk/release/*.apk
+
+      # 构建成功后自动发布 Release（仅 master 分支）
+      - name: Generate version tag
+        if: success() && github.ref == 'refs/heads/master'
+        id: version
+        run: |
+          TAG="v$(date +%Y%m%d)-${GITHUB_SHA::7}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "date=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+
+      - name: Create Release and Upload APKs
+        if: success() && github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Hear ${{ steps.version.outputs.tag }}"
+          body: |
+            ## Hear Music Player - ${{ steps.version.outputs.date }}
+
+            ### 下载
+            - **hear-debug.apk** - Debug 版本（调试用）
+            - **hear-release.apk** - Release 版本（推荐）
+
+            ### Commit
+            `${{ github.sha }}`
+          files: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
