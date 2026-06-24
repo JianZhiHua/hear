@@ -39,14 +39,14 @@ class NetEaseProvider(
     override val source: String = "netease"
     override val displayName: String = "网易云音乐"
 
-    override suspend fun search(keyword: String, limit: Int): List<Track> {
+    override suspend fun search(keyword: String, limit: Int, offset: Int): List<Track> {
         val root = request(
             uri = "/api/search/get",
             data = buildJsonObject {
                 put("s", keyword)
                 put("type", 1)
                 put("limit", limit.coerceIn(1, 50))
-                put("offset", 0)
+                put("offset", offset.coerceAtLeast(0))
             },
             crypto = CryptoMode.Eapi,
         )
@@ -100,12 +100,32 @@ class NetEaseProvider(
     override suspend fun resolveStream(track: Track, quality: AudioQuality): StreamUrl {
         val cookie = credentials.getCookie(source)
         val id = track.resolverId ?: track.id
+        var current = quality
+        var lastError: ProviderError? = null
+
+        // 逐级降级：如果请求的音质不被支持，自动降到更低音质
+        while (current != null) {
+            try {
+                return resolveStreamWithLevel(id, current, cookie)
+            } catch (e: ProviderError) {
+                lastError = e
+                current = current.fallback()
+            }
+        }
+        throw lastError ?: ProviderError("网易云音乐没有返回可播放链接")
+    }
+
+    private suspend fun resolveStreamWithLevel(
+        id: String,
+        quality: AudioQuality,
+        cookie: String?,
+    ): StreamUrl {
         val root = request(
             uri = "/api/song/enhance/player/url/v1",
             data = buildJsonObject {
                 put("ids", "[$id]")
                 put("level", quality.netEaseLevel)
-                put("encodeType", "flac")
+                put("encodeType", quality.netEaseEncodeType)
             },
             crypto = CryptoMode.Eapi,
             cookieOverride = cookie,
