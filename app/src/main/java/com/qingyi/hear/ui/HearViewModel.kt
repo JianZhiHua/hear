@@ -45,6 +45,9 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
     )
     val state: StateFlow<HearUiState> = _state.asStateFlow()
 
+    private val _isShizukuAvailable = MutableStateFlow(false)
+    val isShizukuAvailable: StateFlow<Boolean> = _isShizukuAvailable.asStateFlow()
+
     init {
         viewModelScope.launch {
             val snapshot = queueStore.loadSnapshot()
@@ -100,6 +103,41 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 maybeFetchLyrics(playbackState.currentTrack)
             }
+        }
+        // Shizuku 状态监听
+        try {
+            rikka.shizuku.Shizuku.addBinderReceivedListener(shizukuBinderReceivedListener)
+            rikka.shizuku.Shizuku.addBinderDeadListener(shizukuBinderDeadListener)
+            rikka.shizuku.Shizuku.addRequestPermissionResultListener(shizukuPermissionResultListener)
+            refreshShizukuState()
+        } catch (_: Exception) {
+            // Shizuku 未安装，忽略
+        }
+    }
+
+    // Shizuku 状态监听器
+    private val shizukuBinderReceivedListener = rikka.shizuku.Shizuku.OnBinderReceivedListener {
+        refreshShizukuState()
+    }
+    private val shizukuBinderDeadListener = rikka.shizuku.Shizuku.OnBinderDeadListener {
+        _isShizukuAvailable.value = false
+    }
+    private val shizukuPermissionResultListener = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ ->
+        refreshShizukuState()
+    }
+
+    private fun refreshShizukuState() {
+        _isShizukuAvailable.value = ShizukuCookieExtractor.isAvailable()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        try {
+            rikka.shizuku.Shizuku.removeBinderReceivedListener(shizukuBinderReceivedListener)
+            rikka.shizuku.Shizuku.removeBinderDeadListener(shizukuBinderDeadListener)
+            rikka.shizuku.Shizuku.removeRequestPermissionResultListener(shizukuPermissionResultListener)
+        } catch (_: Exception) {
+            // Shizuku 未安装，忽略
         }
     }
 
@@ -185,8 +223,6 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun isShizukuAvailable(): Boolean = ShizukuCookieExtractor.isAvailable()
-
 
     fun search() {
         val keyword = _state.value.keyword.trim()
@@ -198,7 +234,7 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
             runBusy("正在搜索...") {
                 val results = providers.map { provider ->
                     async(Dispatchers.IO) {
-                        runCatching { provider.search(keyword, limit = 20) }
+                        runCatching { provider.search(keyword, limit = 20, offset = 0) }
                             .fold(
                                 onSuccess = { it },
                                 onFailure = { error ->
@@ -208,10 +244,48 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
                             )
                     }
                 }.awaitAll().flatten()
+                val pageSize = 20
                 _state.value = _state.value.copy(
                     searchResults = results,
+                    searchOffset = results.size,
+                    canLoadMoreSearch = results.size >= pageSize,
+                    lastSearchSource = null,
                     selectedPlaylist = null,
                     message = if (results.isEmpty()) "没有找到歌曲" else "找到 ${results.size} 首歌曲",
+                )
+            }
+        }
+    }
+
+    fun loadMoreSearchResults(selectedSource: String) {
+        val keyword = _state.value.keyword.trim()
+        if (keyword.isBlank() || _state.value.isLoadingMoreSearch || !_state.value.canLoadMoreSearch) return
+        val provider = providerBySource[selectedSource] ?: return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoadingMoreSearch = true)
+            try {
+                val pageSize = 20
+                val newResults = withContext(Dispatchers.IO) {
+                    provider.search(keyword, limit = pageSize, offset = _state.value.searchOffset)
+                }
+                if (newResults.isEmpty()) {
+                    _state.value = _state.value.copy(
+                        isLoadingMoreSearch = false,
+                        canLoadMoreSearch = false,
+                        message = "没有更多结果了",
+                    )
+                } else {
+                    _state.value = _state.value.copy(
+                        searchResults = _state.value.searchResults + newResults,
+                        searchOffset = _state.value.searchOffset + newResults.size,
+                        isLoadingMoreSearch = false,
+                        canLoadMoreSearch = newResults.size >= pageSize,
+                    )
+                }
+            } catch (error: Throwable) {
+                _state.value = _state.value.copy(
+                    isLoadingMoreSearch = false,
+                    message = friendlyError(error),
                 )
             }
         }
@@ -648,6 +722,10 @@ data class HearUiState(
     val keyword: String = "",
     val playlistInput: String = "",
     val searchResults: List<Track> = emptyList(),
+    val searchOffset: Int = 0,
+    val canLoadMoreSearch: Boolean = false,
+    val isLoadingMoreSearch: Boolean = false,
+    val lastSearchSource: String? = null,
     val playlists: List<Playlist> = emptyList(),
     val selectedPlaylist: Playlist? = null,
     val queue: List<Track> = emptyList(),
