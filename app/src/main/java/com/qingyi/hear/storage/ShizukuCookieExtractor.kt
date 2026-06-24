@@ -371,18 +371,9 @@ object ShizukuCookieExtractor {
      * 无法读取其他 APP 的数据。
      */
     private fun shizukuExec(command: Array<String>): Process {
-        // 方式 1：直接调用 Shizuku.newProcess (Shizuku v13+ API)
+        // Shizuku.newProcess 是 private 方法，必须通过反射调用
         try {
-            return Shizuku.newProcess(command, null, null)
-        } catch (_: NoSuchMethodError) {
-            Log.d(TAG, "Shizuku.newProcess 不存在，尝试反射")
-        } catch (e: Exception) {
-            Log.d(TAG, "Shizuku.newProcess 直接调用失败: ${e.message}，尝试反射")
-        }
-
-        // 方式 2：反射调用（兼容旧版 Shizuku）
-        try {
-            val method = Shizuku::class.java.getMethod(
+            val method = Shizuku::class.java.getDeclaredMethod(
                 "newProcess",
                 Array<String>::class.java,
                 Array<String>::class.java,
@@ -391,7 +382,7 @@ object ShizukuCookieExtractor {
             method.isAccessible = true
             return method.invoke(null, command, null, null) as Process
         } catch (e: Exception) {
-            Log.e(TAG, "Shizuku.newProcess 反射调用也失败: ${e.message}")
+            Log.e(TAG, "Shizuku.newProcess 反射调用失败: ${e.message}")
         }
 
         // 不使用 Runtime.exec() 作为 fallback —— 它以 Hear 自身身份运行，无法读取其他 APP 数据
