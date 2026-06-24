@@ -93,5 +93,12 @@ data class LyricSettings(
 enum class AudioQuality(val netEaseLevel: String) {
     Standard("standard"),
     ExHigh("exhigh"),
-    Lossless("lossless"),
+    Lossless("lossless");
+
+    val displayName: String
+        get() = when (this) {
+            Standard -> "标准"
+            ExHigh -> "高品"
+            Lossless -> "无损"
+        }
 }

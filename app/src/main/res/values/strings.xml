@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">听见</string>
     <string name="playback_notification_channel">听见播放</string>
+    <string name="widget_description">听见音乐播放控制</string>
 </resources>

@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MusicNote
@@ -53,10 +54,12 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -96,6 +99,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.qingyi.hear.domain.AudioQuality
 import com.qingyi.hear.domain.LyricBackgroundStyle
 import com.qingyi.hear.domain.LyricColor
 import com.qingyi.hear.domain.LyricSettings
@@ -136,6 +140,7 @@ fun HearApp(viewModel: HearViewModel = viewModel()) {
     var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
     var showPlayer by rememberSaveable { mutableStateOf(false) }
     var showLyricSettings by rememberSaveable { mutableStateOf(false) }
+    var sleepTimerMinutes by rememberSaveable { mutableIntStateOf(0) }
     var trackForLocalPlaylist by remember { mutableStateOf<Track?>(null) }
     val selectedTab = AppTab.entries[selectedTabIndex]
     val localPlaylists = state.playlists.filter { it.kind == LibraryStore.LOCAL_KIND }
@@ -217,6 +222,13 @@ fun HearApp(viewModel: HearViewModel = viewModel()) {
                             onPlaylistInputChanged = viewModel::updatePlaylistInput,
                             onOpenLyricSettings = { showLyricSettings = true },
                             onClearRemoteCache = viewModel::clearRemotePlaylistCache,
+                            audioQuality = state.audioQuality,
+                            onAudioQualityChange = { viewModel.setAudioQuality(it) },
+                            sleepTimerMinutes = sleepTimerMinutes,
+                            onSleepTimerChange = { minutes ->
+                                sleepTimerMinutes = minutes
+                                viewModel.setSleepTimer(minutes)
+                            },
                         )
                     }
                 }
@@ -490,6 +502,10 @@ private fun SettingsPage(
     onPlaylistInputChanged: (String) -> Unit,
     onOpenLyricSettings: () -> Unit,
     onClearRemoteCache: () -> Unit,
+    audioQuality: AudioQuality,
+    onAudioQualityChange: (AudioQuality) -> Unit,
+    sleepTimerMinutes: Int,
+    onSleepTimerChange: (Int) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -534,6 +550,18 @@ private fun SettingsPage(
             )
         }
         item { SectionLabel("个性化") }
+        item {
+            AudioQualitySelector(
+                current = audioQuality,
+                onSelect = onAudioQualityChange,
+            )
+        }
+        item {
+            SleepTimerSetting(
+                currentMinutes = sleepTimerMinutes,
+                onChange = onSleepTimerChange,
+            )
+        }
         item {
             SettingsRow(
                 icon = Icons.Default.Tune,
@@ -1803,3 +1831,76 @@ private fun formatClock(durationMs: Long): String {
     val seconds = totalSeconds % 60
     return "%d:%02d".format(minutes, seconds)
 }
+@Composable
+private fun AudioQualitySelector(
+    current: AudioQuality,
+    onSelect: (AudioQuality) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = freshSurface(),
+        tonalElevation = 0.dp,
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.HighQuality, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(12.dp))
+                Text("音质选择", fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.weight(1f))
+                Text(current.displayName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AudioQuality.entries.forEach { quality ->
+                    FilterChip(
+                        selected = current == quality,
+                        onClick = { onSelect(quality) },
+                        label = { Text(quality.displayName) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SleepTimerSetting(
+    currentMinutes: Int,
+    onChange: (Int) -> Unit,
+) {
+    val presets = listOf(15, 30, 45, 60, 90, 0)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = freshSurface(),
+        tonalElevation = 0.dp,
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Timer, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(12.dp))
+                Text("定时停止", fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.weight(1f))
+                if (currentMinutes > 0) {
+                    Text("${currentMinutes} 分钟后", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                } else {
+                    Text("未开启", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                presets.forEach { minutes ->
+                    FilterChip(
+                        selected = currentMinutes == minutes,
+                        onClick = { onChange(minutes) },
+                        label = {
+                            Text(if (minutes == 0) "关闭" else "${minutes}分钟")
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+

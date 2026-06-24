@@ -8,6 +8,7 @@ import com.qingyi.hear.domain.LyricLine
 import com.qingyi.hear.domain.LyricSettings
 import com.qingyi.hear.domain.Lyrics
 import com.qingyi.hear.domain.PlayMode
+import com.qingyi.hear.domain.AudioQuality
 import com.qingyi.hear.domain.Playlist
 import com.qingyi.hear.domain.Track
 import com.qingyi.hear.domain.activeLyricIndex
@@ -46,7 +47,10 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
     init {
         viewModelScope.launch {
             val snapshot = queueStore.loadSnapshot()
-            _state.value = _state.value.copy(lyricSettings = snapshot.lyricSettings)
+            _state.value = _state.value.copy(
+                lyricSettings = snapshot.lyricSettings,
+                audioQuality = snapshot.audioQuality,
+            )
         }
         viewModelScope.launch {
             val snapshot = libraryStore.loadSnapshot()
@@ -62,7 +66,13 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
                     currentIndex = queueState.currentIndex,
                     playMode = queueState.playMode,
                     volume = queueState.volume,
+                    audioQuality = queueState.audioQuality,
                 )
+            }
+        }
+        viewModelScope.launch {
+            playbackManager.sleepTimerRemainingMs.collectLatest { remaining ->
+                _state.value = _state.value.copy(sleepTimerRemainingMs = remaining)
             }
         }
         viewModelScope.launch {
@@ -397,6 +407,23 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
         playbackManager.setPlayMode(playMode)
     }
 
+    fun setAudioQuality(quality: AudioQuality) {
+        playbackManager.setAudioQuality(quality)
+        _state.value = _state.value.copy(message = "音质已切换：${quality.displayName}")
+    }
+
+    fun setSleepTimer(minutes: Int) {
+        playbackManager.setSleepTimer(minutes)
+        _state.value = _state.value.copy(
+            message = if (minutes > 0) "定时停止：${minutes} 分钟" else "已取消定时停止",
+        )
+    }
+
+    fun cancelSleepTimer() {
+        playbackManager.cancelSleepTimer()
+        _state.value = _state.value.copy(message = "已取消定时停止")
+    }
+
     fun removeQueueItem(index: Int) {
         playbackManager.removeQueueItem(index)
         _state.value = _state.value.copy(message = "已从队列移除歌曲")
@@ -578,7 +605,9 @@ data class HearUiState(
     val durationMs: Long = 0L,
     val volume: Float = 1f,
     val playMode: PlayMode = PlayMode.Order,
+    val audioQuality: AudioQuality = AudioQuality.ExHigh,
     val lyricSettings: LyricSettings = LyricSettings(),
+    val sleepTimerRemainingMs: Long? = null,
     val localPlaylistName: String = "",
     val cachedLibraryUpdatedAtMs: Long = 0L,
     val isBusy: Boolean = false,

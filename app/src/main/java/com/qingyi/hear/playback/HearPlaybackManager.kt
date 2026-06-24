@@ -11,6 +11,7 @@ import com.qingyi.hear.domain.trackQueueKey
 import com.qingyi.hear.providers.MusicProvider
 import com.qingyi.hear.providers.ProviderError
 import com.qingyi.hear.storage.PlaybackQueueStore
+import com.qingyi.hear.widget.HearWidgetReceiver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,20 +35,25 @@ class HearPlaybackManager(
     private var queueTouched = false
     private var lastPersistedIndex = -2
     private var progressJob: Job? = null
+    private var sleepTimerJob: Job? = null
+    private var sleepTimerEndAtMs: Long? = null
     private val appContext = context.applicationContext
     private val _queueState = MutableStateFlow(PlaybackQueueState())
+    private val _sleepTimerRemainingMs = MutableStateFlow<Long?>(null)
 
     private val controller = HearPlaybackController(appContext, client) { track ->
         val provider = providerBySource[track.source]
             ?: throw ProviderError("未知音乐平台：${track.source}")
+        val quality = _queueState.value.audioQuality
         withContext(Dispatchers.IO) {
-            provider.resolveStream(track, AudioQuality.ExHigh)
+            provider.resolveStream(track, quality)
         }
     }
 
     val player = controller.player
     val state: StateFlow<PlaybackState> = controller.state
     val queueState: StateFlow<PlaybackQueueState> = _queueState.asStateFlow()
+    val sleepTimerRemainingMs: StateFlow<Long?> = _sleepTimerRemainingMs.asStateFlow()
 
     init {
         appScope.launch {
@@ -58,6 +64,7 @@ class HearPlaybackManager(
                     currentIndex = snapshot.currentIndex,
                     playMode = snapshot.playMode,
                     volume = snapshot.volume,
+                    audioQuality = snapshot.audioQuality,
                 )
                 lastPersistedIndex = snapshot.currentIndex
                 controller.restoreQueue(snapshot.queue, snapshot.currentIndex, snapshot.playMode, snapshot.volume)
@@ -77,6 +84,8 @@ class HearPlaybackManager(
                     _queueState.value = current.copy(currentIndex = newIndex)
                     persistQueueIndexIfNeeded(newIndex)
                 }
+                // 更新桌面小组件状态
+                updateWidgetState(playbackState)
             }
         }
     }
@@ -174,6 +183,42 @@ class HearPlaybackManager(
         }
     }
 
+    fun setAudioQuality(quality: AudioQuality) {
+        _queueState.value = _queueState.value.copy(audioQuality = quality)
+        appScope.launch {
+            queueStore.saveAudioQuality(quality)
+        }
+    }
+
+    /**
+     * 设置定时停止。minutes=0 表示取消。
+     */
+    fun setSleepTimer(minutes: Int) {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        sleepTimerEndAtMs = null
+        _sleepTimerRemainingMs.value = null
+        if (minutes <= 0) return
+        val durationMs = minutes * 60_000L
+        sleepTimerEndAtMs = System.currentTimeMillis() + durationMs
+        sleepTimerJob = appScope.launch {
+            while (isActive) {
+                val remaining = sleepTimerEndAtMs!! - System.currentTimeMillis()
+                if (remaining <= 0) {
+                    _sleepTimerRemainingMs.value = null
+                    controller.toggle() // pause
+                    break
+                }
+                _sleepTimerRemainingMs.value = remaining
+                delay(1000L)
+            }
+        }
+    }
+
+    fun cancelSleepTimer() {
+        setSleepTimer(0)
+    }
+
     fun removeQueueItem(index: Int) {
         appScope.launch {
             val current = _queueState.value
@@ -220,6 +265,7 @@ class HearPlaybackManager(
 
     fun release() {
         stopProgressTicker()
+        sleepTimerJob?.cancel()
         controller.release()
     }
 
@@ -268,6 +314,17 @@ class HearPlaybackManager(
         appContext.stopService(Intent(appContext, HearPlaybackService::class.java))
     }
 
+    private fun updateWidgetState(playbackState: PlaybackState) {
+        val track = playbackState.currentTrack
+        appContext.getSharedPreferences("widget_state", Context.MODE_PRIVATE)
+            .edit()
+            .putString("title", track?.title ?: "听见")
+            .putString("artist", track?.displayArtist ?: "未在播放")
+            .putBoolean("isPlaying", playbackState.isPlaying)
+            .apply()
+        HearWidgetReceiver.notifyUpdate(appContext)
+    }
+
     private companion object {
         const val PROGRESS_REFRESH_MS = 500L
     }
@@ -278,4 +335,5 @@ data class PlaybackQueueState(
     val currentIndex: Int = -1,
     val playMode: PlayMode = PlayMode.Order,
     val volume: Float = 1f,
+    val audioQuality: AudioQuality = AudioQuality.ExHigh,
 )
