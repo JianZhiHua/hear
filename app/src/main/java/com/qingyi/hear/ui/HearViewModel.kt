@@ -50,6 +50,17 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
     private val _isShizukuAvailable = MutableStateFlow(false)
     val isShizukuAvailable: StateFlow<Boolean> = _isShizukuAvailable.asStateFlow()
 
+    // Shizuku 状态监听器（必须在 init 之前声明，init 中会引用）
+    private val shizukuBinderReceivedListener = rikka.shizuku.Shizuku.OnBinderReceivedListener {
+        refreshShizukuState()
+    }
+    private val shizukuBinderDeadListener = rikka.shizuku.Shizuku.OnBinderDeadListener {
+        _isShizukuAvailable.value = false
+    }
+    private val shizukuPermissionResultListener = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ ->
+        refreshShizukuState()
+    }
+
     init {
         viewModelScope.launch {
             val snapshot = queueStore.loadSnapshot()
@@ -115,17 +126,6 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
         } catch (_: Exception) {
             // Shizuku 未安装，忽略
         }
-    }
-
-    // Shizuku 状态监听器
-    private val shizukuBinderReceivedListener = rikka.shizuku.Shizuku.OnBinderReceivedListener {
-        refreshShizukuState()
-    }
-    private val shizukuBinderDeadListener = rikka.shizuku.Shizuku.OnBinderDeadListener {
-        _isShizukuAvailable.value = false
-    }
-    private val shizukuPermissionResultListener = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ ->
-        refreshShizukuState()
     }
 
     private fun refreshShizukuState() {

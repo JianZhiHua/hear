@@ -118,7 +118,7 @@ internal fun PlayMode.next(): PlayMode =
 
 internal fun PlayMode.icon(): androidx.compose.ui.graphics.vector.ImageVector =
     when (this) {
-        PlayMode.Order -> androidx.compose.material.icons.automirrored.filled.QueueMusic
+        PlayMode.Order -> androidx.compose.material.icons.filled.QueueMusic
         PlayMode.Single -> androidx.compose.material.icons.filled.RepeatOne
         PlayMode.Shuffle -> androidx.compose.material.icons.filled.Shuffle
     }

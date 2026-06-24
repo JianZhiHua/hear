@@ -53,7 +53,7 @@ internal fun LocalPlaylistPickerDialog(
                 if (playlists.isEmpty()) {
                     EmptyState(
                         title = "还没有本地歌单",
-                        body = "可以先创建"我的收藏"，然后把这首歌加入进去。",
+                        body = "可以先创建「我的收藏」，然后把这首歌加入进去。",
                     )
                 } else {
                     playlists.forEach { playlist ->

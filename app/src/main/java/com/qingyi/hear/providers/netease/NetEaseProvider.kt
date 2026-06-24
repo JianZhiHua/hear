@@ -100,7 +100,7 @@ class NetEaseProvider(
     override suspend fun resolveStream(track: Track, quality: AudioQuality): StreamUrl {
         val cookie = credentials.getCookie(source)
         val id = track.resolverId ?: track.id
-        var current = quality
+        var current: AudioQuality? = quality
         var lastError: ProviderError? = null
 
         // 逐级降级：如果请求的音质不被支持，自动降到更低音质
