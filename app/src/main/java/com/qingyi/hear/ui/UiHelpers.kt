@@ -10,6 +10,7 @@ import com.qingyi.hear.domain.LyricTextAlign
 import com.qingyi.hear.domain.PlayMode
 import com.qingyi.hear.domain.Track
 import com.qingyi.hear.storage.LibraryStore
+import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
@@ -121,9 +122,9 @@ internal fun PlayMode.next(): PlayMode =
 
 internal fun PlayMode.icon(): androidx.compose.ui.graphics.vector.ImageVector =
     when (this) {
-        PlayMode.Order -> QueueMusic
-        PlayMode.Single -> RepeatOne
-        PlayMode.Shuffle -> Shuffle
+        PlayMode.Order -> Icons.AutoMirrored.Filled.QueueMusic
+        PlayMode.Single -> Icons.Filled.RepeatOne
+        PlayMode.Shuffle -> Icons.Filled.Shuffle
     }
 
 internal fun platformName(source: String): String =
