@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -91,6 +92,7 @@ internal fun SettingsPage(
                 onExtractCookie = if (isShizukuAvailable) {
                     { onExtractCookie(provider.source) }
                 } else null,
+                isShizukuAvailable = isShizukuAvailable,
             )
         }
         item {
@@ -184,6 +186,7 @@ private fun AccountCard(
     onClearCookie: () -> Unit,
     onLoadUserPlaylists: () -> Unit,
     onExtractCookie: (() -> Unit)?,
+    isShizukuAvailable: Boolean,
 ) {
     Surface(
         color = freshSurface(),
@@ -230,6 +233,13 @@ private fun AccountCard(
                 TextButton(onClick = onClearCookie, enabled = !busy && provider.hasCookie) {
                     Text("清除")
                 }
+            }
+            if (!isShizukuAvailable) {
+                Text(
+                    text = "安装 Shizuku 后可使用「自动提取」功能",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -328,7 +338,10 @@ private fun SleepTimerSetting(
                 }
             }
             Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 presets.forEach { minutes ->
                     FilterChip(
                         selected = currentMinutes == minutes,
