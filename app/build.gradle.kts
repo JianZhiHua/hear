@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -5,7 +7,7 @@ plugins {
 }
 
 // 从 version.properties 读取版本号
-val versionProps = java.util.Properties()
+val versionProps = Properties()
 versionProps.load(file("../version.properties").inputStream())
 val appVersionName = versionProps.getProperty("VERSION_NAME", "1.0.0")
 val appVersionCode = versionProps.getProperty("VERSION_CODE", "1").toInt()
