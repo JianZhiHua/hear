@@ -10,7 +10,7 @@ interface MusicProvider {
     val source: String
     val displayName: String
 
-    suspend fun search(keyword: String, limit: Int = 20): List<Track>
+    suspend fun search(keyword: String, limit: Int = 20, offset: Int = 0): List<Track>
 
     suspend fun fetchUserPlaylists(): List<Playlist>
 

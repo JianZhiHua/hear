@@ -199,7 +199,7 @@ class ProviderLogicTest {
     }
 }
 
-private class MemoryCredentialStore : CredentialStore {
+internal class MemoryCredentialStore : CredentialStore {
     private val cookies = mutableMapOf<String, String>()
 
     override fun getCookie(source: String): String? = cookies[source]

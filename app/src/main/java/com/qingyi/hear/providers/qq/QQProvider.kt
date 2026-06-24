@@ -41,7 +41,8 @@ class QQProvider(
     override val source: String = "qq"
     override val displayName: String = "QQ 音乐"
 
-    override suspend fun search(keyword: String, limit: Int): List<Track> {
+    override suspend fun search(keyword: String, limit: Int, offset: Int): List<Track> {
+        val pageNum = (offset / limit.coerceAtLeast(1)) + 1
         val payload = buildJsonObject {
             put(
                 "search",
@@ -52,7 +53,7 @@ class QQProvider(
                         "param",
                         buildJsonObject {
                             put("num_per_page", limit.coerceIn(1, 50))
-                            put("page_num", 1)
+                            put("page_num", pageNum)
                             put("query", keyword)
                             put("search_type", 0)
                         },
