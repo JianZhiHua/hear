@@ -229,6 +229,8 @@ fun HearApp(viewModel: HearViewModel = viewModel()) {
                                 sleepTimerMinutes = minutes
                                 viewModel.setSleepTimer(minutes)
                             },
+                            onExtractCookie = viewModel::extractCookieFromApp,
+                            isShizukuAvailable = viewModel.isShizukuAvailable(),
                         )
                     }
                 }
@@ -506,6 +508,8 @@ private fun SettingsPage(
     onAudioQualityChange: (AudioQuality) -> Unit,
     sleepTimerMinutes: Int,
     onSleepTimerChange: (Int) -> Unit,
+    onExtractCookie: (String) -> Unit,
+    isShizukuAvailable: Boolean,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -529,6 +533,9 @@ private fun SettingsPage(
                 onSaveCookie = { onSaveCookie(provider.source, cookieInputs[provider.source].orEmpty()) },
                 onClearCookie = { onClearCookie(provider.source) },
                 onLoadUserPlaylists = { onLoadUserPlaylists(provider.source) },
+                onExtractCookie = if (isShizukuAvailable) {
+                    { onExtractCookie(provider.source) }
+                } else null,
             )
         }
         item {
@@ -1425,6 +1432,7 @@ private fun AccountCard(
     onSaveCookie: () -> Unit,
     onClearCookie: () -> Unit,
     onLoadUserPlaylists: () -> Unit,
+    onExtractCookie: (() -> Unit)?,
 ) {
     Surface(
         color = freshSurface(),
@@ -1459,6 +1467,11 @@ private fun AccountCard(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onSaveCookie, enabled = !busy) {
                     Text("校验并保存")
+                }
+                if (onExtractCookie != null) {
+                    OutlinedButton(onClick = onExtractCookie, enabled = !busy) {
+                        Text("自动提取")
+                    }
                 }
                 OutlinedButton(onClick = onLoadUserPlaylists, enabled = !busy && provider.hasCookie) {
                     Text("同步歌单")

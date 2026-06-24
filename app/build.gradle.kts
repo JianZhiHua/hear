@@ -63,6 +63,9 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    // Shizuku API - 读取其他应用 SharedPreferences
+    implementation("dev.rikka.shizuku:api:13.1.2")
+    implementation("dev.rikka.shizuku:provider:13.1.2")
     testImplementation("junit:junit:4.13.2")
     testImplementation(platform("com.squareup.okhttp3:okhttp-bom:5.3.2"))
     testImplementation("com.squareup.okhttp3:mockwebserver3")

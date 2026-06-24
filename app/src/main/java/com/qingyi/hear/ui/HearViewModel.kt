@@ -16,6 +16,7 @@ import com.qingyi.hear.domain.parseLyrics
 import com.qingyi.hear.domain.trackQueueKey
 import com.qingyi.hear.providers.MusicProvider
 import com.qingyi.hear.storage.LibraryStore
+import com.qingyi.hear.storage.ShizukuCookieExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -129,6 +130,63 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
         credentialStore.clearCookie(source)
         refreshProviderStatuses("已清除 ${displayName(source)} Cookie")
     }
+
+    /**
+     * 通过 Shizuku 从已安装的 APP 自动提取 Cookie
+     */
+    fun extractCookieFromApp(source: String) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isBusy = true, message = "正在通过 Shizuku 提取 ${displayName(source)} Cookie...")
+            try {
+                // 检查 Shizuku 状态
+                if (!ShizukuCookieExtractor.isInstalled()) {
+                    _state.value = _state.value.copy(
+                        isBusy = false,
+                        message = "请先安装并激活 Shizuku",
+                    )
+                    return@launch
+                }
+                if (!ShizukuCookieExtractor.isAvailable()) {
+                    val granted = ShizukuCookieExtractor.requestPermission()
+                    if (!granted) {
+                        _state.value = _state.value.copy(
+                            isBusy = false,
+                            message = "Shizuku 权限被拒绝",
+                        )
+                        return@launch
+                    }
+                }
+                // 提取
+                val result = withContext(Dispatchers.IO) {
+                    when (source) {
+                        "qq" -> ShizukuCookieExtractor.extractQQCookie()
+                        "netease" -> ShizukuCookieExtractor.extractNetEaseCookie()
+                        else -> Result.failure(IllegalStateException("不支持的平台"))
+                    }
+                }
+                result.fold(
+                    onSuccess = { cookie ->
+                        credentialStore.setCookie(source, cookie)
+                        refreshProviderStatuses("已自动提取 ${displayName(source)} Cookie")
+                    },
+                    onFailure = { error ->
+                        _state.value = _state.value.copy(
+                            isBusy = false,
+                            message = "提取失败：${error.message}",
+                        )
+                    },
+                )
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    isBusy = false,
+                    message = "提取异常：${e.message}",
+                )
+            }
+        }
+    }
+
+    fun isShizukuAvailable(): Boolean = ShizukuCookieExtractor.isAvailable()
+
 
     fun search() {
         val keyword = _state.value.keyword.trim()
