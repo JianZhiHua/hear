@@ -29,6 +29,42 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
+      # 自动递增版本号（patch +1）
+      - name: Increment version
+        if: github.ref == 'refs/heads/master'
+        run: |
+          # 读取当前版本
+          VERSION=$(grep VERSION_NAME version.properties | cut -d'=' -f2)
+          CODE=$(grep VERSION_CODE version.properties | cut -d'=' -f2)
+          
+          # 解析版本号
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          
+          # 递增 patch
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
+          NEW_CODE=$((CODE + 1))
+          
+          # 更新文件
+          sed -i "s/VERSION_NAME=.*/VERSION_NAME=${NEW_VERSION}/" version.properties
+          sed -i "s/VERSION_CODE=.*/VERSION_CODE=${NEW_CODE}/" version.properties
+          
+          echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "code=${NEW_CODE}" >> $GITHUB_OUTPUT
+          
+          # 提交版本更新
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add version.properties
+          git commit -m "chore: bump version to ${NEW_VERSION}" || true
+          git push || true
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(grep VERSION_NAME version.properties | cut -d'=' -f2)
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
       - name: Generate debug keystore for signing
         run: |
           mkdir -p ~/.android
@@ -58,9 +94,9 @@ jobs:
       # 构建成功后自动发布 Release（仅 master 分支）
       - name: Generate version tag
         if: success() && github.ref == 'refs/heads/master'
-        id: version
+        id: tag
         run: |
-          TAG="v$(date +%Y%m%d)-${GITHUB_SHA::7}"
+          TAG="v${{ steps.version.outputs.version }}"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "date=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
 
@@ -68,17 +104,19 @@ jobs:
         if: success() && github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: "Hear ${{ steps.version.outputs.tag }}"
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "Hear ${{ steps.tag.outputs.tag }}"
           body: |
-            ## Hear Music Player - ${{ steps.version.outputs.date }}
+            ## Hear Music Player ${{ steps.tag.outputs.tag }}
 
             ### 下载
-            - **hear-debug.apk** - Debug 版本（调试用）
-            - **hear-release.apk** - Release 版本（推荐）
+            - **app-release.apk** - Release 版本（推荐）
+            - **app-debug.apk** - Debug 版本（调试用）
 
-            ### Commit
-            `${{ github.sha }}`
+            ### 版本信息
+            - Version: ${{ steps.version.outputs.version }}
+            - Commit: `${{ github.sha }}`
+            - Date: ${{ steps.tag.outputs.date }}
           files: |
             app/build/outputs/apk/debug/*.apk
             app/build/outputs/apk/release/*.apk

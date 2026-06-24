@@ -4,6 +4,12 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+// 从 version.properties 读取版本号
+val versionProps = java.util.Properties()
+versionProps.load(file("../version.properties").inputStream())
+val appVersionName = versionProps.getProperty("VERSION_NAME", "1.0.0")
+val appVersionCode = versionProps.getProperty("VERSION_CODE", "1").toInt()
+
 android {
     namespace = "com.qingyi.hear"
     compileSdk {
@@ -14,8 +20,8 @@ android {
         applicationId = "com.qingyi.hear"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
