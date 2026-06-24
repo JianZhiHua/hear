@@ -29,49 +29,31 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      # 自动递增版本号（patch +1）
-      - name: Increment version
-        if: github.ref == 'refs/heads/master'
+      # 使用固定的签名文件（确保每次签名一致，可覆盖安装）
+      - name: Setup signing keystore
         run: |
-          # 读取当前版本
-          VERSION=$(grep VERSION_NAME version.properties | cut -d'=' -f2)
-          CODE=$(grep VERSION_CODE version.properties | cut -d'=' -f2)
-          
-          # 解析版本号
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-          
-          # 递增 patch
-          NEW_PATCH=$((PATCH + 1))
-          NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
-          NEW_CODE=$((CODE + 1))
-          
-          # 更新文件
-          sed -i "s/VERSION_NAME=.*/VERSION_NAME=${NEW_VERSION}/" version.properties
-          sed -i "s/VERSION_CODE=.*/VERSION_CODE=${NEW_CODE}/" version.properties
-          
-          echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
-          echo "code=${NEW_CODE}" >> $GITHUB_OUTPUT
-          
-          # 提交版本更新
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add version.properties
-          git commit -m "chore: bump version to ${NEW_VERSION}" || true
-          git push || true
+          mkdir -p ~/.android
+          # 如果仓库中有固定的 keystore，使用它
+          if [ -f "app/signing/debug.keystore" ]; then
+            cp app/signing/debug.keystore ~/.android/debug.keystore
+            echo "✅ 使用仓库中的固定 keystore"
+          else
+            # 否则生成一个新的（首次运行）
+            keytool -genkey -v -keystore ~/.android/debug.keystore \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 36500 \
+              -storepass android -keypass android \
+              -dname "CN=Hear,O=QingYi,C=CN"
+            # 保存到仓库供后续使用
+            mkdir -p app/signing
+            cp ~/.android/debug.keystore app/signing/debug.keystore
+            echo "⚠️ 生成新 keystore 并保存到仓库"
+          fi
 
-      - name: Read version
+      - name: Read current version
         id: version
         run: |
           VERSION=$(grep VERSION_NAME version.properties | cut -d'=' -f2)
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-
-      - name: Generate debug keystore for signing
-        run: |
-          mkdir -p ~/.android
-          keytool -genkey -v -keystore ~/.android/debug.keystore \
-            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass android -keypass android \
-            -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug
@@ -91,7 +73,31 @@ jobs:
           name: hear-release
           path: app/build/outputs/apk/release/*.apk
 
-      # 构建成功后自动发布 Release（仅 master 分支）
+      # 构建成功后才递增版本号
+      - name: Increment version after success
+        if: success() && github.ref == 'refs/heads/master'
+        run: |
+          VERSION=$(grep VERSION_NAME version.properties | cut -d'=' -f2)
+          CODE=$(grep VERSION_CODE version.properties | cut -d'=' -f2)
+          
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
+          NEW_CODE=$((CODE + 1))
+          
+          sed -i "s/VERSION_NAME=.*/VERSION_NAME=${NEW_VERSION}/" version.properties
+          sed -i "s/VERSION_CODE=.*/VERSION_CODE=${NEW_CODE}/" version.properties
+          
+          echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add version.properties app/signing/debug.keystore
+          git commit -m "chore: bump version to ${NEW_VERSION}" || true
+          git push || true
+
+      # 构建成功后自动发布 Release
       - name: Generate version tag
         if: success() && github.ref == 'refs/heads/master'
         id: tag
