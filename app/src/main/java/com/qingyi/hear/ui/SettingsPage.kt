@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.HighQuality
@@ -22,6 +24,7 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
+import androidx.compose.material3.Dialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,9 +38,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.qingyi.hear.domain.AudioQuality
+import com.qingyi.hear.network.UpdateResult
 import com.qingyi.hear.storage.LibraryStore
 
 @Composable
@@ -58,6 +63,8 @@ internal fun SettingsPage(
     onSleepTimerChange: (Int) -> Unit,
     onExtractCookie: (String) -> Unit,
     isShizukuAvailable: Boolean,
+    onCheckUpdate: () -> Unit,
+    onUpdateResultConsumed: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -143,13 +150,27 @@ internal fun SettingsPage(
             )
         }
         item {
+            val context = LocalContext.current
+            val versionName = context.packageManager
+                .getPackageInfo(context.packageName, 0).versionName ?: "1.0.0"
             SettingsRow(
                 icon = Icons.Default.MusicNote,
                 title = "版本号",
-                subtitle = "V1.0.0",
-                onClick = null,
+                subtitle = if (state.isCheckingUpdate) "检查中..." else "V$versionName",
+                onClick = if (state.isCheckingUpdate) null else onCheckUpdate,
             )
         }
+    }
+
+    // 更新对话框
+    val updateResult = state.updateResult
+    if (updateResult is UpdateResult.Available) {
+        UpdateAvailableDialog(
+            version = updateResult.version,
+            body = updateResult.body,
+            url = updateResult.url,
+            onDismiss = onUpdateResultConsumed,
+        )
     }
 }
 
@@ -316,6 +337,73 @@ private fun SleepTimerSetting(
                             Text(if (minutes == 0) "关闭" else "${minutes}分钟")
                         },
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UpdateAvailableDialog(
+    version: String,
+    body: String,
+    url: String,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text(
+                    text = "发现新版本",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = "新版本：V$version",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                if (body.isNotBlank()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(8.dp),
+                    ) {
+                        Text(
+                            text = body,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("取消")
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val intent = android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse(url),
+                            )
+                            context.startActivity(intent)
+                            onDismiss()
+                        },
+                    ) {
+                        Text("前往下载")
+                    }
                 }
             }
         }

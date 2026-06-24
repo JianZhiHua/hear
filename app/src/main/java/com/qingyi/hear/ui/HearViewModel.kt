@@ -15,6 +15,8 @@ import com.qingyi.hear.domain.activeLyricIndex
 import com.qingyi.hear.domain.parseLyrics
 import com.qingyi.hear.domain.trackQueueKey
 import com.qingyi.hear.providers.MusicProvider
+import com.qingyi.hear.network.UpdateChecker
+import com.qingyi.hear.network.UpdateResult
 import com.qingyi.hear.storage.LibraryStore
 import com.qingyi.hear.storage.ShizukuCookieExtractor
 import kotlinx.coroutines.Dispatchers
@@ -556,6 +558,43 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
         _state.value = _state.value.copy(message = "已取消定时停止")
     }
 
+    /**
+     * 检查 GitHub 是否有新版本
+     */
+    fun checkForUpdate() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isCheckingUpdate = true)
+            try {
+                val context = getApplication<Application>()
+                val currentVersion = context.packageManager
+                    .getPackageInfo(context.packageName, 0).versionName ?: "1.0.0"
+                val client = container.client
+                val result = UpdateChecker.checkForUpdate(currentVersion, client)
+                _state.value = _state.value.copy(
+                    isCheckingUpdate = false,
+                    updateResult = result,
+                    message = when (result) {
+                        is UpdateResult.Available -> null // 通过对话框显示
+                        is UpdateResult.UpToDate -> "已是最新版本"
+                        is UpdateResult.Error -> "检查更新失败：${result.message}"
+                    },
+                )
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    isCheckingUpdate = false,
+                    message = "检查更新失败：${e.message}",
+                )
+            }
+        }
+    }
+
+    /**
+     * 清除更新检查结果
+     */
+    fun clearUpdateResult() {
+        _state.value = _state.value.copy(updateResult = null)
+    }
+
     fun removeQueueItem(index: Int) {
         playbackManager.removeQueueItem(index)
         _state.value = _state.value.copy(message = "已从队列移除歌曲")
@@ -748,6 +787,8 @@ data class HearUiState(
     val cachedLibraryUpdatedAtMs: Long = 0L,
     val isBusy: Boolean = false,
     val message: String? = null,
+    val isCheckingUpdate: Boolean = false,
+    val updateResult: UpdateResult? = null,
 )
 
 data class ProviderStatus(

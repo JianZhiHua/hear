@@ -136,6 +136,8 @@ fun HearApp(viewModel: HearViewModel = viewModel()) {
                             },
                             onExtractCookie = viewModel::extractCookieFromApp,
                             isShizukuAvailable = isShizukuAvailable,
+                            onCheckUpdate = viewModel::checkForUpdate,
+                            onUpdateResultConsumed = viewModel::clearUpdateResult,
                         )
                     }
                 }
