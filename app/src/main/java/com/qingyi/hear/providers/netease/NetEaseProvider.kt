@@ -101,7 +101,7 @@ class NetEaseProvider(
         val cookie = credentials.getCookie(source)
         val id = track.resolverId ?: track.id
         var current: AudioQuality? = quality
-        var lastError: ProviderError? = null
+        var lastError: Exception? = null
 
         // 逐级降级：如果请求的音质不被支持，自动降到更低音质
         while (current != null) {
@@ -110,9 +110,16 @@ class NetEaseProvider(
             } catch (e: ProviderError) {
                 lastError = e
                 current = current.fallback()
+            } catch (e: IOException) {
+                // HTTP 错误也触发降级（某些音质可能返回4xx/5xx）
+                lastError = e
+                current = current.fallback()
             }
         }
-        throw lastError ?: ProviderError("网易云音乐没有返回可播放链接")
+        throw lastError?.let {
+            if (it is ProviderError) it
+            else ProviderError("网易云音乐没有返回可播放链接: ${it.message}", it)
+        } ?: ProviderError("网易云音乐没有返回可播放链接")
     }
 
     private suspend fun resolveStreamWithLevel(

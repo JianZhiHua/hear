@@ -224,4 +224,26 @@ class NetEaseResolveStreamTest {
             assertEquals(2, server.requestCount)
         }
     }
+
+    /** HTTP 403/500 等错误也应触发降级 */
+    @Test
+    fun httpErrorFallsBackToLowerQuality() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse.Builder().code(403).build())  // ExHigh 返回403
+        server.enqueue(successResponse())                          // Standard 成功
+        server.start()
+
+        server.use {
+            val provider = NetEaseProvider(
+                client = OkHttpClient(),
+                credentials = MemoryCredentialStore(),
+                domain = server.url("").toString().trimEnd('/'),
+                apiDomain = server.url("").toString().trimEnd('/'),
+            )
+
+            val result = provider.resolveStream(track(), AudioQuality.ExHigh)
+            assertEquals("https://stream.test/song.mp3", result.url)
+            assertEquals(2, server.requestCount)
+        }
+    }
 }
