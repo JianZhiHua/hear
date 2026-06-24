@@ -10,6 +10,9 @@ import com.qingyi.hear.domain.LyricTextAlign
 import com.qingyi.hear.domain.PlayMode
 import com.qingyi.hear.domain.Track
 import com.qingyi.hear.storage.LibraryStore
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Shuffle
 
 @Composable
 internal fun freshBackground(): Color = MaterialTheme.colorScheme.background
@@ -118,9 +121,9 @@ internal fun PlayMode.next(): PlayMode =
 
 internal fun PlayMode.icon(): androidx.compose.ui.graphics.vector.ImageVector =
     when (this) {
-        PlayMode.Order -> androidx.compose.material.icons.filled.QueueMusic
-        PlayMode.Single -> androidx.compose.material.icons.filled.RepeatOne
-        PlayMode.Shuffle -> androidx.compose.material.icons.filled.Shuffle
+        PlayMode.Order -> QueueMusic
+        PlayMode.Single -> RepeatOne
+        PlayMode.Shuffle -> Shuffle
     }
 
 internal fun platformName(source: String): String =
