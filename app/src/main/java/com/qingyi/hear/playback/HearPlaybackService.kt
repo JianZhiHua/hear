@@ -8,6 +8,9 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -24,9 +27,13 @@ import com.qingyi.hear.R
 @Suppress("DEPRECATION")
 class HearPlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
+    private var audioManager: AudioManager? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var hadAudioFocus = false
 
     override fun onCreate() {
         super.onCreate()
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         ensureNotificationChannel()
         val notificationProvider = DefaultMediaNotificationProvider.Builder(this)
             .setNotificationId(NOTIFICATION_ID)
@@ -59,6 +66,28 @@ class HearPlaybackService : MediaSessionService() {
         mediaSession = session
         addSession(session)
         triggerNotificationUpdate()
+
+        // 监听播放状态变化，管理 AudioFocus
+        session.player.addListener(object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) {
+                    requestAudioFocus()
+                } else {
+                    // 不立即释放，保留焦点以便快速恢复
+                }
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                when (playbackState) {
+                    Player.STATE_IDLE -> {
+                        releaseAudioFocus()
+                    }
+                    Player.STATE_ENDED -> {
+                        // 播放结束，可以延迟释放焦点
+                    }
+                }
+            }
+        })
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -79,6 +108,7 @@ class HearPlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        releaseAudioFocus()
         mediaSession?.let { session ->
             if (isSessionAdded(session)) {
                 removeSession(session)
@@ -162,6 +192,106 @@ class HearPlaybackService : MediaSessionService() {
                 0
             },
         )
+    }
+
+    /**
+     * 请求音频焦点
+     *
+     * 优化点：
+     * 1. 使用 AudioFocusRequest（API 26+）
+     * 2. 处理焦点丢失和恢复
+     * 3. 支持延迟聚焦（Duck）
+     */
+    private fun requestAudioFocus() {
+        if (hadAudioFocus) return
+
+        val am = audioManager ?: return
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val audioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build()
+
+            val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(audioAttributes)
+                .setOnAudioFocusChangeListener(audioFocusListener)
+                .setAcceptsDelayedFocusGain(true)
+                .setWillPauseWhenDucked(false)
+                .build()
+
+            audioFocusRequest = focusRequest
+            val result = am.requestAudioFocus(focusRequest)
+            hadAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        } else {
+            @Suppress("DEPRECATION")
+            val result = am.requestAudioFocus(
+                audioFocusListener,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN,
+            )
+            hadAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        }
+    }
+
+    /**
+     * 释放音频焦点
+     */
+    private fun releaseAudioFocus() {
+        if (!hadAudioFocus) return
+
+        val am = audioManager ?: return
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            am.abandonAudioFocus(audioFocusListener)
+        }
+
+        audioFocusRequest = null
+        hadAudioFocus = false
+    }
+
+    /**
+     * 音频焦点变化监听器
+     *
+     * 处理逻辑：
+     * - AUDIOFOCUS_LOSS: 长期丢失，暂停播放
+     * - AUDIOFOCUS_LOSS_TRANSIENT: 短暂丢失，暂停播放
+     * - AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK: 短暂丢失，降低音量
+     * - AUDIOFOCUS_GAIN: 获得焦点，恢复播放/音量
+     */
+    private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        val player = mediaSession?.player ?: return@OnAudioFocusChangeListener
+
+        when (focusChange) {
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                // 长期丢失焦点（如电话呼入）
+                player.pause()
+                hadAudioFocus = false
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                // 短暂丢失焦点（如通知音）
+                player.pause()
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                // 短暂丢失，可以降低音量继续播放
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    // Android O+ 系统会自动 Duck
+                } else {
+                    player.volume = 0.2f
+                }
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                // 获得焦点
+                if (!player.isPlaying && player.playbackState != Player.STATE_ENDED) {
+                    player.play()
+                }
+                player.volume = 1.0f
+                hadAudioFocus = true
+            }
+        }
     }
 
     companion object {
