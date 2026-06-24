@@ -19,11 +19,11 @@ private data class CachedStreamUrl(
     /**
      * 检查 URL 是否已过期
      *
-     * @param提前刷新Ms 提前多少毫秒认为过期（默认30秒）
+     * @param refreshAheadMs 提前多少毫秒认为过期（默认30秒）
      */
-    fun isExpired(提前刷新Ms: Long = 30_000L): Boolean {
+    fun isExpired(refreshAheadMs: Long = 30_000L): Boolean {
         val expiresAtMs = streamUrl.expiresAtEpochSeconds?.let { it * 1000L } ?: return false
-        return System.currentTimeMillis() >= (expiresAtMs - 提前刷新Ms)
+        return System.currentTimeMillis() >= (expiresAtMs - refreshAheadMs)
     }
 }
 
@@ -38,7 +38,7 @@ private data class CachedStreamUrl(
  */
 object StreamUrlCache {
     private const val MAX_CACHE_SIZE = 100
-    private const val DEFAULT提前刷新_MS = 30_000L // 30秒
+    private const val DEFAULT_REFRESH_AHEAD_MS = 30_000L // 30秒
 
     private val cache = LruCache<String, CachedStreamUrl>(MAX_CACHE_SIZE)
     private val refreshLocks = ConcurrentHashMap<String, Any>()
@@ -48,9 +48,9 @@ object StreamUrlCache {
      *
      * @return 缓存的 URL，如果不存在或已过期返回 null
      */
-    fun get(trackId: String, 提前刷新Ms: Long = DEFAULT提前刷新_MS): StreamUrl? {
+    fun get(trackId: String, refreshAheadMs: Long = DEFAULT_REFRESH_AHEAD_MS): StreamUrl? {
         val cached = cache.get(trackId) ?: return null
-        return if (cached.isExpired(提前刷新Ms)) {
+        return if (cached.isExpired(refreshAheadMs)) {
             cache.remove(trackId)
             null
         } else {
