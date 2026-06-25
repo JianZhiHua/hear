@@ -1,6 +1,7 @@
 package com.qingyi.hear.ui
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.qingyi.hear.HearApplication
@@ -27,7 +28,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
 
 class HearViewModel(application: Application) : AndroidViewModel(application) {
     private val container = (application as HearApplication).container
@@ -49,6 +52,13 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isShizukuAvailable = MutableStateFlow(false)
     val isShizukuAvailable: StateFlow<Boolean> = _isShizukuAvailable.asStateFlow()
+
+    /**
+     * Activity 级别的 Shizuku 权限请求函数。
+     * 由 [com.qingyi.hear.MainActivity] 通过 HearApp 设置。
+     * 签名：接收一个回调 (granted: Boolean) -> Unit，内部从 Activity 上下文发起权限请求。
+     */
+    var onRequestShizukuPermission: ((callback: (Boolean) -> Unit) -> Unit)? = null
 
     // Shizuku 状态监听器（必须在 init 之前声明，init 中会引用）
     private val shizukuBinderReceivedListener = rikka.shizuku.Shizuku.OnBinderReceivedListener {
@@ -187,7 +197,7 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 if (!ShizukuCookieExtractor.isAvailable()) {
-                    val granted = ShizukuCookieExtractor.requestPermission()
+                    val granted = requestShizukuPermissionWithCallback()
                     if (!granted) {
                         _state.value = _state.value.copy(
                             isBusy = false,
@@ -223,6 +233,37 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
+    }
+
+    /**
+     * 通过 Activity 上下文请求 Shizuku 权限。
+     * 优先使用 Activity 级别的请求（确保授权窗口正常弹出），
+     * 回退到 ShizukuCookieExtractor 内置方式。
+     */
+    private suspend fun requestShizukuPermissionWithCallback(): Boolean {
+        val activityRequester = onRequestShizukuPermission
+        return if (activityRequester != null) {
+            Log.i("ShizukuCookie", "requestShizukuPermission: 通过 Activity 上下文发起请求")
+            // 通过 Activity 上下文发起请求，使用 suspendCancellableCoroutine 桥接回调
+            suspendCancellableCoroutine { cont ->
+                activityRequester { granted ->
+                    Log.i("ShizukuCookie", "requestShizukuPermission: Activity 回调结果 granted=$granted")
+                    if (cont.isActive) cont.resume(granted)
+                }
+            }
+        } else {
+            Log.w("ShizukuCookie", "requestShizukuPermission: Activity 回调为 null，回退到内置方式")
+            // 回退到内置方式
+            ShizukuCookieExtractor.requestPermission()
+        }
+    }
+
+    /**
+     * Activity onResume 时调用，刷新 Shizuku 状态。
+     * 解决手动授权后需要重启 APP 的问题。
+     */
+    fun onResume() {
+        refreshShizukuState()
     }
 
 

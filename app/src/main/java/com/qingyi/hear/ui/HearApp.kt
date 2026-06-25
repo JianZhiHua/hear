@@ -1,6 +1,7 @@
 package com.qingyi.hear.ui
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +17,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -26,6 +28,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qingyi.hear.storage.LibraryStore
@@ -37,7 +42,10 @@ private enum class AppTab {
 }
 
 @Composable
-fun HearApp(viewModel: HearViewModel = viewModel()) {
+fun HearApp(
+    viewModel: HearViewModel = viewModel(),
+    onRequestShizukuPermission: ((callback: (Boolean) -> Unit) -> Unit)? = null,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val cookieInputs = remember { mutableStateMapOf<String, String>() }
@@ -49,6 +57,38 @@ fun HearApp(viewModel: HearViewModel = viewModel()) {
     val selectedTab = AppTab.entries[selectedTabIndex]
     val localPlaylists = state.playlists.filter { it.kind == LibraryStore.LOCAL_KIND }
     val isShizukuAvailable by viewModel.isShizukuAvailable.collectAsStateWithLifecycle()
+
+    // 设置 Activity 级别的 Shizuku 权限请求函数到 ViewModel
+    LaunchedEffect(onRequestShizukuPermission) {
+        viewModel.onRequestShizukuPermission = onRequestShizukuPermission
+    }
+
+    // 生命周期监听：onResume 时刷新 Shizuku 状态
+    // 解决手动授权后需要重启 APP 的问题
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.onResume()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    // 返回键处理：子页面→关闭子页面，非Library标签→回到Library，Library→交给系统（退出桌面）
+    val hasSubPage = showPlayer || showLyricSettings || state.selectedPlaylist != null
+    val hasBackStack = hasSubPage || selectedTab != AppTab.Library
+    BackHandler(enabled = hasBackStack) {
+        when {
+            showPlayer -> showPlayer = false
+            showLyricSettings -> showLyricSettings = false
+            state.selectedPlaylist != null -> viewModel.closePlaylist()
+            selectedTab != AppTab.Library -> selectedTabIndex = 0
+        }
+    }
 
     LaunchedEffect(state.message) {
         val message = state.message?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect

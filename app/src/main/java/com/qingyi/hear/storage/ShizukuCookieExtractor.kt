@@ -87,18 +87,28 @@ object ShizukuCookieExtractor {
      */
     suspend fun requestPermission(): Boolean {
         if (isAvailable()) return true
+        Log.i(TAG, "requestPermission: 当前未授权，发起权限请求")
         return suspendCancellableCoroutine { cont ->
             val listener = object : Shizuku.OnRequestPermissionResultListener {
                 override fun onRequestPermissionResult(requestCode: Int, grantResult: Int) {
+                    val granted = grantResult == PackageManager.PERMISSION_GRANTED
+                    Log.i(TAG, "requestPermission: 权限结果 requestCode=$requestCode granted=$granted")
                     Shizuku.removeRequestPermissionResultListener(this)
-                    cont.resume(grantResult == PackageManager.PERMISSION_GRANTED)
+                    cont.resume(granted)
                 }
             }
             Shizuku.addRequestPermissionResultListener(listener)
             cont.invokeOnCancellation {
                 Shizuku.removeRequestPermissionResultListener(listener)
             }
-            Shizuku.requestPermission(0)
+            try {
+                Shizuku.requestPermission(0)
+                Log.i(TAG, "requestPermission: Shizuku.requestPermission(0) 已调用")
+            } catch (e: Exception) {
+                Log.e(TAG, "requestPermission: Shizuku.requestPermission 异常: ${e.message}", e)
+                Shizuku.removeRequestPermissionResultListener(listener)
+                cont.resume(false)
+            }
         }
     }
 
@@ -106,10 +116,15 @@ object ShizukuCookieExtractor {
      * 从 QQ 音乐提取 Cookie（带诊断）
      */
     suspend fun extractQQCookieWithDiag(): ExtractResult {
-        if (!isAvailable()) return ExtractResult(null, "Shizuku 未就绪")
+        Log.i(TAG, "extractQQCookieWithDiag: 开始提取 QQ 音乐 Cookie")
+        if (!isAvailable()) {
+            Log.w(TAG, "extractQQCookieWithDiag: Shizuku 不可用")
+            return ExtractResult(null, "Shizuku 未就绪")
+        }
         val readResult = readSpFieldsWithDiag(QQ_SP_DIR, QQ_SP_FILES, QQ_COOKIE_FIELDS)
         if (readResult.values.isEmpty()) {
             val diag = buildDiagnostics(QQ_SP_DIR, readResult, QQ_COOKIE_FIELDS)
+            Log.w(TAG, "extractQQCookieWithDiag: 未读取到字段, diag=$diag")
             return ExtractResult(null, "未读取到 QQ 音乐登录信息，请确认已登录", diag)
         }
         val uin = readResult.values["uin"]
@@ -118,6 +133,7 @@ object ShizukuCookieExtractor {
             ?: readResult.values["login_uin"]
         if (uin == null) {
             val diag = buildDiagnostics(QQ_SP_DIR, readResult, QQ_COOKIE_FIELDS)
+            Log.w(TAG, "extractQQCookieWithDiag: 缺少 uin 字段, diag=$diag")
             return ExtractResult(null, "QQ 音乐 Cookie 缺少 uin 字段", diag)
         }
         val cookie = buildString {
@@ -130,7 +146,7 @@ object ShizukuCookieExtractor {
             readResult.values["qqmusic_auth"]?.let { append("; qqmusic_auth=").append(it) }
         }
         val diag = buildDiagnostics(QQ_SP_DIR, readResult, QQ_COOKIE_FIELDS)
-        Log.i(TAG, "QQ Cookie 提取成功: $diag")
+        Log.i(TAG, "extractQQCookieWithDiag: QQ Cookie 提取成功, diag=$diag")
         return ExtractResult(cookie, diagnostics = diag)
     }
 
@@ -143,25 +159,48 @@ object ShizukuCookieExtractor {
     }
 
     /**
-     * 从网易云音乐提取 Cookie
+     * 从网易云音乐提取 Cookie（带诊断）
      */
-    suspend fun extractNetEaseCookie(): Result<String> = runCatching {
-        if (!isAvailable()) throw IllegalStateException("Shizuku 未就绪")
-        val values = readSpFields(NE_SP_DIR, NE_SP_FILES, NE_COOKIE_FIELDS)
-        if (values.isEmpty()) throw IllegalStateException("未读取到网易云登录信息，请确认已登录")
-        val musicU = values["MUSIC_U"]
-            ?: throw IllegalStateException("网易云 Cookie 缺少 MUSIC_U 字段，请确认已登录")
-        buildString {
-            append("MUSIC_U=").append(musicU)
-            values["MUSIC_A"]?.let { append("; MUSIC_A=").append(it) }
-            values["__csrf"]?.let { append("; __csrf=").append(it) }
-            values["NTESPCID"]?.let { append("; NTESPCID=").append(it) }
-            values["deviceId"]?.let { append("; deviceId=").append(it) }
+    suspend fun extractNetEaseCookieWithDiag(): ExtractResult {
+        Log.i(TAG, "extractNetEaseCookieWithDiag: 开始提取网易云音乐 Cookie")
+        if (!isAvailable()) {
+            Log.w(TAG, "extractNetEaseCookieWithDiag: Shizuku 不可用")
+            return ExtractResult(null, "Shizuku 未就绪")
         }
+        val readResult = readSpFieldsWithDiag(NE_SP_DIR, NE_SP_FILES, NE_COOKIE_FIELDS)
+        if (readResult.values.isEmpty()) {
+            val diag = buildDiagnostics(NE_SP_DIR, readResult, NE_COOKIE_FIELDS)
+            Log.w(TAG, "extractNetEaseCookieWithDiag: 未读取到字段, diag=$diag")
+            return ExtractResult(null, "未读取到网易云登录信息，请确认已登录", diag)
+        }
+        val musicU = readResult.values["MUSIC_U"]
+        if (musicU == null) {
+            val diag = buildDiagnostics(NE_SP_DIR, readResult, NE_COOKIE_FIELDS)
+            Log.w(TAG, "extractNetEaseCookieWithDiag: 缺少 MUSIC_U 字段, diag=$diag")
+            return ExtractResult(null, "网易云 Cookie 缺少 MUSIC_U 字段，请确认已登录", diag)
+        }
+        val cookie = buildString {
+            append("MUSIC_U=").append(musicU)
+            readResult.values["MUSIC_A"]?.let { append("; MUSIC_A=").append(it) }
+            readResult.values["__csrf"]?.let { append("; __csrf=").append(it) }
+            readResult.values["NTESPCID"]?.let { append("; NTESPCID=").append(it) }
+            readResult.values["deviceId"]?.let { append("; deviceId=").append(it) }
+        }
+        val diag = buildDiagnostics(NE_SP_DIR, readResult, NE_COOKIE_FIELDS)
+        Log.i(TAG, "extractNetEaseCookieWithDiag: 网易云 Cookie 提取成功, diag=$diag")
+        return ExtractResult(cookie, diagnostics = diag)
     }
 
     /**
-     * 运行诊断，列出指定 SP 目录下的文件和可读取的内容
+     * 从网易云音乐提取 Cookie（兼容旧接口）
+     */
+    suspend fun extractNetEaseCookie(): Result<String> = runCatching {
+        val result = extractNetEaseCookieWithDiag()
+        result.cookie ?: throw IllegalStateException(result.error ?: "提取失败")
+    }
+
+    /**
+     * 运行 QQ 音乐诊断，列出指定 SP 目录下的文件和可读取的内容
      */
     suspend fun runQQDiagnostics(): String = withContext(Dispatchers.IO) {
         val sb = StringBuilder()
@@ -206,6 +245,49 @@ object ShizukuCookieExtractor {
     }
 
     /**
+     * 运行网易云音乐诊断，列出指定 SP 目录下的文件和可读取的内容
+     */
+    suspend fun runNetEaseDiagnostics(): String = withContext(Dispatchers.IO) {
+        val sb = StringBuilder()
+        sb.appendLine("=== 网易云音乐 SP 诊断 ===")
+        sb.appendLine("目标目录: $NE_SP_DIR")
+
+        // 1. 列出目录内容
+        val lsOutput = shizukuLs(NE_SP_DIR)
+        if (lsOutput != null) {
+            sb.appendLine("目录内容:")
+            sb.appendLine(lsOutput)
+        } else {
+            sb.appendLine("无法列出目录（权限不足或目录不存在）")
+            val parentLs = shizukuLs("/data/data/$NE_PKG")
+            if (parentLs != null) {
+                sb.appendLine("APP 数据目录内容:")
+                sb.appendLine(parentLs)
+            }
+        }
+
+        // 2. 尝试读取每个 SP 文件
+        sb.appendLine("\n--- 逐一尝试读取 ---")
+        for (file in NE_SP_FILES) {
+            val path = "$NE_SP_DIR/$file"
+            val content = shizukuCat(path)
+            if (content != null) {
+                sb.appendLine("✓ $file (${content.length} 字节)")
+                val keys = Regex("""<string\s+name="([^"]+)"""").findAll(content)
+                    .map { it.groupValues[1] }.toList()
+                if (keys.isNotEmpty()) {
+                    sb.appendLine("  字段: ${keys.take(20).joinToString(", ")}")
+                }
+            } else {
+                sb.appendLine("✗ $file (读取失败)")
+            }
+        }
+
+        Log.d(TAG, sb.toString())
+        sb.toString()
+    }
+
+    /**
      * 带诊断的 SP 字段读取
      */
     private data class SpReadResult(
@@ -223,42 +305,66 @@ object ShizukuCookieExtractor {
         val filesRead = mutableListOf<String>()
         val filesFailed = mutableListOf<String>()
 
+        // 先列出 SP 目录，确认实际存在的文件名
+        val dirListing = shizukuLs(spDir)
+        Log.i(TAG, "readSpFieldsWithDiag: SP目录=$spDir")
+        if (dirListing != null) {
+            Log.i(TAG, "readSpFieldsWithDiag: 目录内容:\n$dirListing")
+        } else {
+            Log.w(TAG, "readSpFieldsWithDiag: 无法列出目录 $spDir，尝试父目录")
+            val parentDir = spDir.substringBeforeLast('/')
+            val parentLs = shizukuLs(parentDir)
+            Log.i(TAG, "readSpFieldsWithDiag: 父目录 $parentDir 内容:\n$parentLs")
+        }
+
         for (file in spFiles) {
             val path = "$spDir/$file"
             Log.d(TAG, "尝试读取: $path")
             val xml = shizukuCat(path)
             if (xml == null) {
-                Log.d(TAG, "  → 读取失败")
+                Log.d(TAG, "  → 读取失败: $path")
                 filesFailed.add(file)
                 continue
             }
-            Log.d(TAG, "  → 读取成功 (${xml.length} 字节)")
+            Log.i(TAG, "  → 读取成功: $path (${xml.length} 字节)")
+            Log.d(TAG, "  → 内容前300字: ${xml.take(300)}")
             filesRead.add(file)
 
             for (field in fields) {
                 if (result.containsKey(field)) continue
                 // <string name="key">value</string>
-                val pattern = Regex("""<string\s+name="$field"[^>]*>([^<]*)</string>""")
+                val pattern = Regex(""""<string\s+name="$field"[^>]*>([^<]*)</string>"""")
                 pattern.find(xml)?.groupValues?.get(1)?.let {
                     result[field] = it
-                    Log.d(TAG, "  找到字段 $field = ${it.take(20)}...")
+                    Log.i(TAG, "  ✓ 找到字段 $field = ${it.take(30)}...")
                 }
                 // <boolean name="key" value="val" />
-                val boolPattern = Regex("""<boolean\s+name="$field"[^>]*value="([^"]*)"""")
-                boolPattern.find(xml)?.groupValues?.get(1)?.let { result[field] = it }
+                val boolPattern = Regex(""""<boolean\s+name="$field"[^>]*value="([^"]*)"""")
+                boolPattern.find(xml)?.groupValues?.get(1)?.let {
+                    result[field] = it
+                    Log.i(TAG, "  ✓ 找到字段 $field (boolean) = $it")
+                }
                 // <int name="key" value="123" />
-                val intPattern = Regex("""<int\s+name="$field"[^>]*value="([^"]*)"""")
-                intPattern.find(xml)?.groupValues?.get(1)?.let { result[field] = it }
+                val intPattern = Regex(""""<int\s+name="$field"[^>]*value="([^"]*)"""")
+                intPattern.find(xml)?.groupValues?.get(1)?.let {
+                    result[field] = it
+                    Log.i(TAG, "  ✓ 找到字段 $field (int) = $it")
+                }
             }
             if (fields.all { result.containsKey(it) }) break
         }
 
-        // SP 文件全部失败时，尝试列出目录
+        // SP 文件全部失败时，列出目录和父目录帮助诊断
         if (result.isEmpty() && filesRead.isEmpty()) {
+            Log.w(TAG, "readSpFieldsWithDiag: 所有 SP 文件均读取失败！")
             val lsResult = shizukuLs(spDir)
-            Log.d(TAG, "SP 目录内容: $lsResult")
+            Log.w(TAG, "readSpFieldsWithDiag: SP 目录内容: $lsResult")
+            val parentDir = spDir.substringBeforeLast('/')
+            val parentLs = shizukuLs(parentDir)
+            Log.w(TAG, "readSpFieldsWithDiag: 父目录 $parentDir 内容: $parentLs")
         }
 
+        Log.i(TAG, "readSpFieldsWithDiag 完成: 成功读取=${filesRead}, 失败=${filesFailed}, 获取字段=${result.keys}")
         SpReadResult(result, filesRead, filesFailed)
     }
 
@@ -371,6 +477,7 @@ object ShizukuCookieExtractor {
      * 无法读取其他 APP 的数据。
      */
     private fun shizukuExec(command: Array<String>): Process {
+        Log.d(TAG, "shizukuExec: 执行命令 ${command.joinToString(" ")}")
         // Shizuku.newProcess 是 private 方法，必须通过反射调用
         try {
             val method = Shizuku::class.java.getDeclaredMethod(
@@ -380,9 +487,11 @@ object ShizukuCookieExtractor {
                 String::class.java,
             )
             method.isAccessible = true
-            return method.invoke(null, command, null, null) as Process
+            val process = method.invoke(null, command, null, null) as Process
+            Log.d(TAG, "shizukuExec: 反射调用成功, pid=${process.hashCode()}")
+            return process
         } catch (e: Exception) {
-            Log.e(TAG, "Shizuku.newProcess 反射调用失败: ${e.message}")
+            Log.e(TAG, "Shizuku.newProcess 反射调用失败: ${e.message}", e)
         }
 
         // 不使用 Runtime.exec() 作为 fallback —— 它以 Hear 自身身份运行，无法读取其他 APP 数据
