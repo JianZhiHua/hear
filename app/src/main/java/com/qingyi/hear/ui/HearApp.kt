@@ -168,8 +168,6 @@ fun HearApp(
                             onPlaylistInputChanged = viewModel::updatePlaylistInput,
                             onOpenLyricSettings = { showLyricSettings = true },
                             onClearRemoteCache = viewModel::clearRemotePlaylistCache,
-                            audioQuality = state.audioQuality,
-                            onAudioQualityChange = { viewModel.setAudioQuality(it) },
                             sleepTimerMinutes = sleepTimerMinutes,
                             onSleepTimerChange = { minutes ->
                                 sleepTimerMinutes = minutes

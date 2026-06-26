@@ -1,6 +1,5 @@
 package com.qingyi.hear.providers
 
-import com.qingyi.hear.domain.AudioQuality
 import com.qingyi.hear.domain.Lyrics
 import com.qingyi.hear.domain.Playlist
 import com.qingyi.hear.domain.StreamUrl
@@ -16,7 +15,7 @@ interface MusicProvider {
 
     suspend fun fetchPlaylist(idOrUrl: String): Playlist
 
-    suspend fun resolveStream(track: Track, quality: AudioQuality = AudioQuality.ExHigh): StreamUrl
+    suspend fun resolveStream(track: Track): StreamUrl
 
     suspend fun fetchLyrics(track: Track): Lyrics
 }

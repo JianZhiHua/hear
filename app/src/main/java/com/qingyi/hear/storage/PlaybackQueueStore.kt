@@ -8,7 +8,6 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.qingyi.hear.domain.LyricSettings
 import com.qingyi.hear.domain.PlayMode
-import com.qingyi.hear.domain.AudioQuality
 import com.qingyi.hear.domain.Track
 import com.qingyi.hear.network.HearJson
 import kotlinx.coroutines.flow.first
@@ -22,7 +21,6 @@ class PlaybackQueueStore(private val context: Context) {
     private val playModeKey = stringPreferencesKey("playback_play_mode")
     private val volumeKey = floatPreferencesKey("playback_volume")
     private val lyricSettingsKey = stringPreferencesKey("lyric_settings")
-    private val audioQualityKey = stringPreferencesKey("playback_audio_quality")
     private val trackListSerializer = ListSerializer(Track.serializer())
 
     suspend fun loadQueue(): List<Track> {
@@ -45,16 +43,12 @@ class PlaybackQueueStore(private val context: Context) {
         val lyricSettings = preferences[lyricSettingsKey]
             ?.let { payload -> runCatching { HearJson.decodeFromString(LyricSettings.serializer(), payload) }.getOrNull() }
             ?: LyricSettings()
-        val audioQuality = preferences[audioQualityKey]
-            ?.let { value -> runCatching { AudioQuality.valueOf(value) }.getOrNull() }
-            ?: AudioQuality.ExHigh
         return StoredPlaybackSnapshot(
             queue = queue,
             currentIndex = currentIndex,
             playMode = playMode,
             volume = volume,
             lyricSettings = lyricSettings,
-            audioQuality = audioQuality,
         )
     }
 
@@ -90,11 +84,6 @@ class PlaybackQueueStore(private val context: Context) {
         }
     }
 
-    suspend fun saveAudioQuality(quality: AudioQuality) {
-        context.hearDataStore.edit { preferences ->
-            preferences[audioQualityKey] = quality.name
-        }
-    }
 }
 
 data class StoredPlaybackSnapshot(
@@ -103,5 +92,4 @@ data class StoredPlaybackSnapshot(
     val playMode: PlayMode,
     val volume: Float,
     val lyricSettings: LyricSettings,
-    val audioQuality: AudioQuality = AudioQuality.ExHigh,
 )

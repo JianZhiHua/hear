@@ -89,26 +89,3 @@ data class LyricSettings(
     val lineSpacing: Float = 1.35f,
     val backgroundStyle: LyricBackgroundStyle = LyricBackgroundStyle.Surface,
 )
-
-enum class AudioQuality(
-    val netEaseLevel: String,
-    val netEaseEncodeType: String,
-) {
-    Standard("standard", "mp3"),
-    ExHigh("exhigh", "mp3"),
-    Lossless("lossless", "flac");
-
-    val displayName: String
-        get() = when (this) {
-            Standard -> "标准"
-            ExHigh -> "高品"
-            Lossless -> "无损"
-        }
-
-    /** 降级到更低音质，Standard 无法再降 */
-    fun fallback(): AudioQuality? = when (this) {
-        Lossless -> ExHigh
-        ExHigh -> Standard
-        Standard -> null
-    }
-}

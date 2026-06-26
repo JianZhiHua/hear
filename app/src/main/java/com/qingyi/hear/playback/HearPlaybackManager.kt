@@ -3,7 +3,6 @@ package com.qingyi.hear.playback
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
-import com.qingyi.hear.domain.AudioQuality
 import com.qingyi.hear.domain.PlayMode
 import com.qingyi.hear.domain.Track
 import com.qingyi.hear.domain.removeQueueItem
@@ -44,9 +43,8 @@ class HearPlaybackManager(
     private val controller = HearPlaybackController(appContext, client) { track ->
         val provider = providerBySource[track.source]
             ?: throw ProviderError("未知音乐平台：${track.source}")
-        val quality = _queueState.value.audioQuality
         withContext(Dispatchers.IO) {
-            provider.resolveStream(track, quality)
+            provider.resolveStream(track)
         }
     }
 
@@ -64,7 +62,6 @@ class HearPlaybackManager(
                     currentIndex = snapshot.currentIndex,
                     playMode = snapshot.playMode,
                     volume = snapshot.volume,
-                    audioQuality = snapshot.audioQuality,
                 )
                 lastPersistedIndex = snapshot.currentIndex
                 controller.restoreQueue(snapshot.queue, snapshot.currentIndex, snapshot.playMode, snapshot.volume)
@@ -183,12 +180,6 @@ class HearPlaybackManager(
         }
     }
 
-    fun setAudioQuality(quality: AudioQuality) {
-        _queueState.value = _queueState.value.copy(audioQuality = quality)
-        appScope.launch {
-            queueStore.saveAudioQuality(quality)
-        }
-    }
 
     /**
      * 设置定时停止。minutes=0 表示取消。
@@ -335,5 +326,4 @@ data class PlaybackQueueState(
     val currentIndex: Int = -1,
     val playMode: PlayMode = PlayMode.Order,
     val volume: Float = 1f,
-    val audioQuality: AudioQuality = AudioQuality.ExHigh,
 )

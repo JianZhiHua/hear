@@ -1,6 +1,5 @@
 package com.qingyi.hear.providers.netease
 
-import com.qingyi.hear.domain.AudioQuality
 import com.qingyi.hear.domain.Lyrics
 import com.qingyi.hear.domain.Playlist
 import com.qingyi.hear.domain.StreamUrl
@@ -97,42 +96,22 @@ class NetEaseProvider(
         return playlistFromPayload(playlist)
     }
 
-    override suspend fun resolveStream(track: Track, quality: AudioQuality): StreamUrl {
+    override suspend fun resolveStream(track: Track): StreamUrl {
         val cookie = credentials.getCookie(source)
         val id = track.resolverId ?: track.id
-        var current: AudioQuality? = quality
-        var lastError: Exception? = null
-
-        // 逐级降级：如果请求的音质不被支持，自动降到更低音质
-        while (current != null) {
-            try {
-                return resolveStreamWithLevel(id, current, cookie)
-            } catch (e: ProviderError) {
-                lastError = e
-                current = current.fallback()
-            } catch (e: IOException) {
-                // HTTP 错误也触发降级（某些音质可能返回4xx/5xx）
-                lastError = e
-                current = current.fallback()
-            }
-        }
-        throw lastError?.let {
-            if (it is ProviderError) it
-            else ProviderError("网易云音乐没有返回可播放链接: ${it.message}", it)
-        } ?: ProviderError("网易云音乐没有返回可播放链接")
+        return resolveStreamWithLevel(id, cookie)
     }
 
     private suspend fun resolveStreamWithLevel(
         id: String,
-        quality: AudioQuality,
         cookie: String?,
     ): StreamUrl {
         val root = request(
             uri = "/api/song/enhance/player/url/v1",
             data = buildJsonObject {
                 put("ids", "[$id]")
-                put("level", quality.netEaseLevel)
-                put("encodeType", quality.netEaseEncodeType)
+                put("level", "exhigh")
+                put("encodeType", "mp3")
             },
             crypto = CryptoMode.Eapi,
             cookieOverride = cookie,
@@ -140,7 +119,7 @@ class NetEaseProvider(
         val item = root.arr("data")?.firstOrNull()?.jsonObjectOrNull()
         val url = item?.string("url")
         if (url.isNullOrBlank()) {
-            throw ProviderError(describeStreamFailure(root, item, quality.netEaseLevel))
+            throw ProviderError(describeStreamFailure(root, item))
         }
         val headers = mutableMapOf(
             "Referer" to NETEASE_DOMAIN,
@@ -334,11 +313,10 @@ private fun extractNumericId(value: String): String =
     Regex("""\d+""").findAll(value).lastOrNull()?.value
         ?: throw ProviderError("请输入网易云音乐歌单 ID 或链接")
 
-private fun describeStreamFailure(root: JsonObject, item: JsonObject?, requestedLevel: String): String {
-    val details = mutableListOf("网易云音乐没有返回可播放链接", "音质=$requestedLevel")
+private fun describeStreamFailure(root: JsonObject, item: JsonObject?): String {
+    val details = mutableListOf("网易云音乐没有返回可播放链接")
     val code = item?.get("code")?.asInt() ?: root["code"].asInt()
     if (code != null) details += "code=$code"
-    item?.string("level")?.let { details += "返回音质=$it" }
     item?.string("type")?.let { details += "格式=$it" }
     val message = item?.string("message") ?: item?.string("msg") ?: root.string("message") ?: root.string("msg")
     if (!message.isNullOrBlank()) details += message

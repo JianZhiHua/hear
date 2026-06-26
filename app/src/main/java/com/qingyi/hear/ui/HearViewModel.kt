@@ -9,7 +9,6 @@ import com.qingyi.hear.domain.LyricLine
 import com.qingyi.hear.domain.LyricSettings
 import com.qingyi.hear.domain.Lyrics
 import com.qingyi.hear.domain.PlayMode
-import com.qingyi.hear.domain.AudioQuality
 import com.qingyi.hear.domain.Playlist
 import com.qingyi.hear.domain.Track
 import com.qingyi.hear.domain.activeLyricIndex
@@ -76,7 +75,6 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
             val snapshot = queueStore.loadSnapshot()
             _state.value = _state.value.copy(
                 lyricSettings = snapshot.lyricSettings,
-                audioQuality = snapshot.audioQuality,
             )
         }
         viewModelScope.launch {
@@ -93,7 +91,6 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
                     currentIndex = queueState.currentIndex,
                     playMode = queueState.playMode,
                     volume = queueState.volume,
-                    audioQuality = queueState.audioQuality,
                 )
             }
         }
@@ -582,10 +579,6 @@ class HearViewModel(application: Application) : AndroidViewModel(application) {
         playbackManager.setPlayMode(playMode)
     }
 
-    fun setAudioQuality(quality: AudioQuality) {
-        playbackManager.setAudioQuality(quality)
-        _state.value = _state.value.copy(message = "音质已切换：${quality.displayName}")
-    }
 
     fun setSleepTimer(minutes: Int) {
         playbackManager.setSleepTimer(minutes)
@@ -821,7 +814,6 @@ data class HearUiState(
     val durationMs: Long = 0L,
     val volume: Float = 1f,
     val playMode: PlayMode = PlayMode.Order,
-    val audioQuality: AudioQuality = AudioQuality.ExHigh,
     val lyricSettings: LyricSettings = LyricSettings(),
     val sleepTimerRemainingMs: Long? = null,
     val localPlaylistName: String = "",

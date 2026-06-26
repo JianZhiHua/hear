@@ -18,7 +18,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudDone
-import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Sync
@@ -42,7 +41,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.qingyi.hear.domain.AudioQuality
 import com.qingyi.hear.network.UpdateResult
 import com.qingyi.hear.storage.LibraryStore
 
@@ -58,8 +56,6 @@ internal fun SettingsPage(
     onPlaylistInputChanged: (String) -> Unit,
     onOpenLyricSettings: () -> Unit,
     onClearRemoteCache: () -> Unit,
-    audioQuality: AudioQuality,
-    onAudioQualityChange: (AudioQuality) -> Unit,
     sleepTimerMinutes: Int,
     onSleepTimerChange: (Int) -> Unit,
     onExtractCookie: (String) -> Unit,
@@ -114,12 +110,6 @@ internal fun SettingsPage(
             )
         }
         item { SectionLabel("个性化") }
-        item {
-            AudioQualitySelector(
-                current = audioQuality,
-                onSelect = onAudioQualityChange,
-            )
-        }
         item {
             SleepTimerSetting(
                 currentMinutes = sleepTimerMinutes,
@@ -274,39 +264,6 @@ private fun ManualPlaylistImport(
                 }
                 OutlinedButton(onClick = { onImportPlaylist("qq") }, enabled = !state.isBusy) {
                     Text("QQ 音乐导入")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AudioQualitySelector(
-    current: AudioQuality,
-    onSelect: (AudioQuality) -> Unit,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = freshSurface(),
-        tonalElevation = 0.dp,
-        shape = RoundedCornerShape(8.dp),
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.HighQuality, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(12.dp))
-                Text("音质选择", fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.weight(1f))
-                Text(current.displayName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AudioQuality.entries.forEach { quality ->
-                    FilterChip(
-                        selected = current == quality,
-                        onClick = { onSelect(quality) },
-                        label = { Text(quality.displayName) },
-                    )
                 }
             }
         }

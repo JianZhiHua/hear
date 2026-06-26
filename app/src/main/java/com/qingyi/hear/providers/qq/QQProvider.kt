@@ -1,6 +1,5 @@
 package com.qingyi.hear.providers.qq
 
-import com.qingyi.hear.domain.AudioQuality
 import com.qingyi.hear.domain.Lyrics
 import com.qingyi.hear.domain.Playlist
 import com.qingyi.hear.domain.StreamUrl
@@ -116,7 +115,7 @@ class QQProvider(
         )
     }
 
-    override suspend fun resolveStream(track: Track, quality: AudioQuality): StreamUrl {
+    override suspend fun resolveStream(track: Track): StreamUrl {
         val identifier = track.resolverId
             ?: throw ProviderError("QQ 音乐歌曲缺少播放解析信息")
         val (songMid, mediaMid) = parseResolverId(identifier)
