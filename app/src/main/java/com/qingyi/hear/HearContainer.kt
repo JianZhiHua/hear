@@ -1,43 +1,52 @@
 package com.qingyi.hear
 
 import android.content.Context
-import com.qingyi.hear.network.HearDns
-import com.qingyi.hear.playback.HearPlaybackManager
-import com.qingyi.hear.providers.MusicProvider
-import com.qingyi.hear.providers.netease.NetEaseProvider
-import com.qingyi.hear.providers.qq.QQProvider
-import com.qingyi.hear.storage.EncryptedCookieStore
-import com.qingyi.hear.storage.LibraryStore
-import com.qingyi.hear.storage.PlaybackQueueStore
-import java.util.concurrent.TimeUnit
+import com.qingyi.hear.core.lyrics.LyricsRepository
+import com.qingyi.hear.core.lyrics.LyricsRepositoryImpl
+import com.qingyi.hear.core.lyrics.LyricsSyncEngine
+import com.qingyi.hear.core.lyrics.NeteaseLyricsFetcher
+import com.qingyi.hear.core.lyrics.QQLyricsFetcher
+import com.qingyi.hear.core.network.NetworkModule
+import com.qingyi.hear.core.search.MusicSearchRepository
+import com.qingyi.hear.core.search.MusicSearchRepositoryImpl
+import com.qingyi.hear.core.search.NeteaseSearchDataSource
+import com.qingyi.hear.core.search.QQMusicSearchDataSource
+import com.qingyi.hear.data.HistoryStore
+import com.qingyi.hear.data.MediaSessionDataSource
+import com.qingyi.hear.data.NotificationMusicDataSource
+import com.qingyi.hear.data.MusicAggregationEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import okhttp3.OkHttpClient
 
 class HearContainer(context: Context) {
     val appContext: Context = context.applicationContext
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    val client: OkHttpClient = OkHttpClient.Builder()
-        .dns(HearDns())
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(45, TimeUnit.SECONDS)
-        .callTimeout(70, TimeUnit.SECONDS)
-        .build()
-    val credentialStore = EncryptedCookieStore(appContext)
-    val queueStore = PlaybackQueueStore(appContext)
-    val libraryStore = LibraryStore(appContext)
-    val providers: List<MusicProvider> = listOf(
-        QQProvider(client, credentialStore),
-        NetEaseProvider(client, credentialStore),
+    val historyStore = HistoryStore(appContext)
+    val mediaSessionSource = MediaSessionDataSource(appContext)
+    val notificationMusicSource = NotificationMusicDataSource(appContext)
+
+    val aggregationEngine = MusicAggregationEngine(
+        mediaSessionSource = mediaSessionSource,
+        notificationSource = notificationMusicSource,
+        historyStore = historyStore,
+        scope = appScope,
     )
-    val providerBySource: Map<String, MusicProvider> = providers.associateBy { it.source }
-    val playbackManager = HearPlaybackManager(
-        context = appContext,
-        appScope = appScope,
-        queueStore = queueStore,
-        client = client,
-        providerBySource = providerBySource,
-    )
+
+    // ---------- 网络与无登录搜索 / 歌词 ----------
+    private val httpClient = NetworkModule.httpClient
+    private val json = NetworkModule.json
+
+    private val neteaseSearch = NeteaseSearchDataSource(httpClient, json)
+    private val qqSearch = QQMusicSearchDataSource(httpClient, json)
+    val musicSearchRepository: MusicSearchRepository =
+        MusicSearchRepositoryImpl(neteaseSearch, qqSearch)
+
+    private val neteaseLyrics = NeteaseLyricsFetcher(httpClient, json)
+    private val qqLyrics = QQLyricsFetcher(httpClient, json)
+    val lyricsRepository: LyricsRepository =
+        LyricsRepositoryImpl(neteaseLyrics, qqLyrics)
+
+    val lyricsSyncEngine = LyricsSyncEngine()
 }
